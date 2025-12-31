@@ -1,0 +1,62 @@
+{
+  "project_info": {
+    "project_number": "744633819126",
+    "project_id": "keyboard-arena",
+    "storage_bucket": "keyboard-arena.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:744633819126:android:a4a618648a474f3e44f1d7",
+        "android_client_info": {
+          "package_name": "com.example.biz_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "744633819126-nalmgqm3urc46lir13561s5iltl6t7kt.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.biz_app",
+            "certificate_hash": "9808bd134699c629924db6b18c3cb84c9e9a265e"
+          }
+        },
+        {
+          "client_id": "744633819126-olll8dglu06dr75m7uocl7uupq6jfghp.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.biz_app",
+            "certificate_hash": "dfb015663d617adc008fb9de36192866aa78936a"
+          }
+        },
+        {
+          "client_id": "744633819126-jhih0t17opocq9rrlq0mp41pc4tr80qt.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCux6Bg-WfAz7xAc29fN1r33UnOYU1M0qI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "744633819126-jhih0t17opocq9rrlq0mp41pc4tr80qt.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "744633819126-mb66hth0ogh9abjds94rc3hg1rqcocr7.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.bizApp"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
