@@ -92,5 +92,26 @@ service cloud.firestore {
       // 생성: 로그인한 유저만 가능 (클라이언트에서 푸시 알림 요청 생성)
       allow create: if request.auth != null;
     }
+    
+    // ============================================
+    // 4. reports 컬렉션 (신고 기능)
+    // ============================================
+    match /reports/{reportId} {
+      // 읽기: 본인이 신고한 항목만 읽기 가능 (중복 신고 체크용)
+      allow read: if request.auth != null && 
+                     resource.data.reporterId == request.auth.uid;
+      
+      // 생성: 로그인한 유저만 가능, reporterId는 본인 UID와 일치해야 함
+      allow create: if request.auth != null && 
+                      request.resource.data.reporterId == request.auth.uid &&
+                      request.resource.data.targetId is string &&
+                      request.resource.data.targetType is string &&
+                      (request.resource.data.targetType == 'topic' || request.resource.data.targetType == 'comment') &&
+                      request.resource.data.reason is string &&
+                      request.resource.data.status == 'pending';
+      
+      // 수정/삭제: 차단 (신고는 생성만 가능)
+      allow update, delete: if false;
+    }
   }
 }

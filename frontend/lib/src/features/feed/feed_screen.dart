@@ -5,6 +5,9 @@ import 'main_drawer.dart';
 import '../vote/vote_screen.dart';
 import '../profile/notification_history_screen.dart';
 import 'create_topic_screen.dart';
+import '../report/report_service.dart';
+import '../report/report_dialog.dart';
+import '../block/block_service.dart';
 
 class FeedScreen extends StatefulWidget {
   const FeedScreen({super.key});
@@ -23,6 +26,11 @@ class _FeedScreenState extends State<FeedScreen> {
   // Firebase 인스턴스
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
+  // 신고된 주제 추적 (로컬 상태)
+  final Set<String> _reportedTopics = {};
+  final ReportService _reportService = ReportService();
+  final BlockService _blockService = BlockService();
+
   // 카테고리 리스트
   final List<String> _categories = [
     '전체', '음식', '게임', '연애', '스포츠', '유머', '정치', '직장인', '패션', '기타'
@@ -30,6 +38,39 @@ class _FeedScreenState extends State<FeedScreen> {
 
   // 조회기간 리스트
   final List<String> _periods = ['전체', '1일', '1주', '1달', '직접설정'];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadReportedTopics();
+  }
+
+  // 신고한 주제 목록 불러오기 (앱 재시작 시에도 유지)
+  Future<void> _loadReportedTopics() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      final reports = await _db
+          .collection('reports')
+          .where('reporterId', isEqualTo: user.uid)
+          .where('targetType', isEqualTo: 'topic')
+          .get();
+
+      if (mounted) {
+        setState(() {
+          for (var report in reports.docs) {
+            final targetId = report.data()['targetId'] as String?;
+            if (targetId != null) {
+              _reportedTopics.add(targetId);
+            }
+          }
+        });
+      }
+    } catch (e) {
+      print('❌ 신고한 주제 목록 불러오기 에러: $e');
+    }
+  }
 
   // Firestore 쿼리 생성 (인덱스 문제를 완전히 피하기 위해 orderBy도 제거)
   Query<Map<String, dynamic>> _getTopicsQuery() {
@@ -206,9 +247,12 @@ class _FeedScreenState extends State<FeedScreen> {
 
           // Firebase 실시간 데이터 구독
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: _getTopicsQuery().snapshots(),
-              builder: (context, snapshot) {
+            child: StreamBuilder<List<String>>(
+              stream: _blockService.getBlockedUsersStream(),
+              builder: (context, blockedUsersSnapshot) {
+                return StreamBuilder<QuerySnapshot>(
+                  stream: _getTopicsQuery().snapshots(),
+                  builder: (context, snapshot) {
                 // 로딩 중
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -263,9 +307,18 @@ class _FeedScreenState extends State<FeedScreen> {
                   );
                 }
 
-                // 클라이언트 측에서 필터링 및 정렬 처리
-                final docs = _filterAndSortDocuments(snapshot.data!.docs);
-                final topicCount = docs.length;
+                    // 클라이언트 측에서 필터링 및 정렬 처리
+                    final allDocs = _filterAndSortDocuments(snapshot.data!.docs);
+                    // 신고된 주제 필터링
+                    final reportedFilteredDocs = allDocs.where((doc) => !_reportedTopics.contains(doc.id)).toList();
+                    // 차단한 사용자의 주제 필터링
+                    final blockedUserIds = blockedUsersSnapshot.data ?? [];
+                    final docs = reportedFilteredDocs.where((doc) {
+                      final data = doc.data() as Map<String, dynamic>?;
+                      final authorId = data?['authorId'] as String?;
+                      return authorId != null && !blockedUserIds.contains(authorId);
+                    }).toList();
+                    final topicCount = docs.length;
 
                 // 필터링 후 데이터 없음
                 if (topicCount == 0) {
@@ -368,6 +421,7 @@ class _FeedScreenState extends State<FeedScreen> {
                                 initialVoteCounts: List<int>.from(data['voteCounts'] ?? []),
                                 options: List<String>.from(data['options'] ?? []),
                                 hotComment: hotComment,
+                                onReport: () => _reportTopic(doc.id),
                               );
                             },
                           );
@@ -375,6 +429,8 @@ class _FeedScreenState extends State<FeedScreen> {
                       ),
                     ),
                   ],
+                );
+                  },
                 );
               },
             ),
@@ -425,6 +481,52 @@ class _FeedScreenState extends State<FeedScreen> {
         ),
       ),
     );
+  }
+
+  // 주제 신고 기능
+  Future<void> _reportTopic(String topicId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('로그인이 필요합니다.')),
+        );
+      }
+      return;
+    }
+
+    // 신고 사유 선택 다이얼로그 표시
+    final reason = await ReportDialog.show(context);
+    if (reason == null) return; // 사용자가 취소한 경우
+
+    try {
+      await _reportService.report(
+        targetId: topicId,
+        targetType: 'topic',
+        reason: reason,
+      );
+
+      if (mounted) {
+        // 신고된 주제를 Set에 추가하고 화면에서 숨김
+        setState(() {
+          _reportedTopics.add(topicId);
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('신고가 접수되었습니다.')),
+        );
+      }
+    } catch (e) {
+      print('❌ 주제 신고 에러: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString().replaceFirst('Exception: ', '')),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildPeriodChip(BuildContext context, String label) {
@@ -488,6 +590,7 @@ class ArenaCard extends StatefulWidget {
   final List<String> options;
   final String hotComment;
   final List<Color>? colors; // 선택적 (기본 색상 사용)
+  final VoidCallback? onReport; // 신고 콜백
 
   const ArenaCard({
     super.key,
@@ -498,6 +601,7 @@ class ArenaCard extends StatefulWidget {
     required this.options,
     required this.hotComment,
     this.colors,
+    this.onReport,
   });
 
   @override
@@ -742,6 +846,29 @@ class _ArenaCardState extends State<ArenaCard> {
               Icon(Icons.people_outline, size: 16, color: Colors.grey[500]),
               const SizedBox(width: 4),
               Text('$totalVotes명', style: TextStyle(color: Colors.grey[500], fontSize: 13)),
+              if (widget.onReport != null) ...[
+                const SizedBox(width: 8),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert, size: 18, color: Colors.grey),
+                  onSelected: (value) {
+                    if (value == 'report') {
+                      widget.onReport?.call();
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: 'report',
+                      child: Row(
+                        children: [
+                          Icon(Icons.flag_outlined, size: 20, color: Colors.red),
+                          SizedBox(width: 8),
+                          Text('이 주제 신고하기'),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 16),

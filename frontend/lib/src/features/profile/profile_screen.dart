@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'notification_setting_screen.dart';
 import '../vote/vote_screen.dart';
+import '../block/block_service.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String? userId; // 사용자 ID (null이면 현재 로그인한 사용자)
@@ -23,6 +24,7 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   int _selectedIndex = 0;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final BlockService _blockService = BlockService();
 
   // 댓글 개수 가져오기 (collectionGroup 인덱스 문제 회피)
   Future<int> _getCommentCount(String userId) async {
@@ -119,6 +121,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   MaterialPageRoute(builder: (context) => const NotificationSettingScreen()),
                 ).then((_) => setState(() {}));
               },
+            )
+          else
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert),
+              onSelected: (value) {
+                if (value == 'block') {
+                  _blockUser(targetUserId);
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'block',
+                  child: Row(
+                    children: [
+                      Icon(Icons.block, size: 20, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text('이 사용자 차단하기'),
+                    ],
+                  ),
+                ),
+              ],
             ),
         ],
       ),
@@ -780,5 +803,52 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (timestamp == null) return '날짜 없음';
     final date = timestamp.toDate();
     return '${date.year}. ${date.month}. ${date.day}.';
+  }
+
+  // 사용자 차단 기능
+  Future<void> _blockUser(String userId) async {
+    // 차단 확인 다이얼로그
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('사용자 차단'),
+        content: const Text('이 사용자를 차단하시겠습니까?\n차단된 사용자의 글과 댓글이 더 이상 보이지 않습니다.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('차단'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await _blockService.blockUser(userId);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('이 사용자의 글이 더 이상 보이지 않습니다.')),
+        );
+        // 프로필 화면 닫기
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      print('❌ 사용자 차단 에러: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString().replaceFirst('Exception: ', '')),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 }

@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart'; // PlatformException 사용
+import 'package:url_launcher/url_launcher.dart';
 import 'auth_service.dart';
+import '../feed/feed_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -23,11 +26,21 @@ class _LoginScreenState extends State<LoginScreen> {
       // 로그인 시도
       final user = await AuthService().signInWithGoogle();
 
-      // 로그인이 성공하면 자동으로 화면이 넘어가므로, 여기선 에러 처리만
-      if (user == null && mounted) {
-        setState(() => _isLoading = false);
+      if (user == null) {
+        // 사용자가 로그인을 취소한 경우
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
+        return;
       }
-      // 성공 시 로딩 상태 끌 필요 없음 (화면이 바뀌니까)
+
+      // 로그인 성공 시 강제로 FeedScreen으로 이동
+      // StreamBuilder가 반응하지 않는 문제 해결 (회원 탈퇴 후 재로그인 시)
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pushReplacement(
+          MaterialPageRoute(builder: (context) => const FeedScreen()),
+        );
+      }
     } catch (e) {
       // 에러 발생 시 사용자에게 알림
       if (mounted) {
@@ -174,9 +187,68 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                   ),
+            
+            const SizedBox(height: 40),
+            
+            // 이용약관 및 개인정보처리방침 동의 문구
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 40),
+              child: RichText(
+                textAlign: TextAlign.center,
+                text: TextSpan(
+                  style: const TextStyle(
+                    color: Colors.grey,
+                    fontSize: 12,
+                  ),
+                  children: [
+                    const TextSpan(text: '로그인 시 '),
+                    TextSpan(
+                      text: '이용약관',
+                      style: const TextStyle(
+                        color: Colors.grey,
+                        fontSize: 12,
+                        decoration: TextDecoration.underline,
+                      ),
+                      recognizer: TapGestureRecognizer()
+                        ..onTap = () => _openTermsOfService(),
+                    ),
+                    const TextSpan(text: ' 및 '),
+                    TextSpan(
+                      text: '개인정보처리방침',
+                      style: const TextStyle(
+                        color: Colors.grey,
+                        fontSize: 12,
+                        decoration: TextDecoration.underline,
+                      ),
+                      recognizer: TapGestureRecognizer()
+                        ..onTap = () => _openPrivacyPolicy(),
+                    ),
+                    const TextSpan(text: '에 동의하는 것으로 간주합니다.'),
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
       ),
     );
+  }
+
+  // 이용약관 링크 열기
+  Future<void> _openTermsOfService() async {
+    // TODO: 실제 노션 페이지 링크로 교체 필요
+    final uri = Uri.parse('https://www.google.com');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  // 개인정보처리방침 링크 열기
+  Future<void> _openPrivacyPolicy() async {
+    // TODO: 실제 노션 페이지 링크로 교체 필요
+    final uri = Uri.parse('https://www.google.com');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
   }
 }

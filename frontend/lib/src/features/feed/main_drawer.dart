@@ -28,10 +28,16 @@ class MainDrawer extends StatelessWidget {
 
               if (user != null) {
                 displayEmail = user.email ?? '이메일 없음';
-                if (snapshot.hasData && snapshot.data!.exists) {
+                // 문서가 존재하거나 아직 로딩 중일 때 처리
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  displayName = '로딩 중...';
+                } else if (snapshot.hasData && snapshot.data!.exists) {
                   final data = snapshot.data!.data() as Map<String, dynamic>?;
                   displayName = data?['nickname'] ?? '익명 유저';
+                } else if (snapshot.hasError) {
+                  displayName = '익명 유저';
                 } else {
+                  // 문서가 아직 생성되지 않았을 때 (회원 탈퇴 후 재가입 시)
                   displayName = user.displayName ?? '익명 유저';
                 }
               }
@@ -48,19 +54,7 @@ class MainDrawer extends StatelessWidget {
                   backgroundColor: Colors.white,
                   child: Icon(Icons.person, color: Color(0xFFE91E63), size: 40),
                 ),
-                accountName: user != null
-                    ? GestureDetector(
-                        onTap: () => _showNicknameEditDialog(context, user.uid, displayName, db),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(displayName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                            const SizedBox(width: 8),
-                            const Icon(Icons.edit, size: 18, color: Colors.white70),
-                          ],
-                        ),
-                      )
-                    : Text(displayName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                accountName: Text(displayName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
                 accountEmail: Text(displayEmail),
                 onDetailsPressed: () {
                   if (user != null) {
@@ -139,61 +133,4 @@ class MainDrawer extends StatelessWidget {
     );
   }
 
-  // 닉네임 수정 다이얼로그
-  void _showNicknameEditDialog(BuildContext context, String userId, String currentNickname, FirebaseFirestore db) {
-    final TextEditingController nicknameController = TextEditingController(text: currentNickname);
-    
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('닉네임 수정'),
-        content: TextField(
-          controller: nicknameController,
-          decoration: const InputDecoration(
-            labelText: '닉네임',
-            hintText: '닉네임을 입력하세요',
-            border: OutlineInputBorder(),
-          ),
-          maxLength: 20,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final newNickname = nicknameController.text.trim();
-              if (newNickname.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('닉네임을 입력해주세요.')),
-                );
-                return;
-              }
-              
-              try {
-                await db.collection('users').doc(userId).set({
-                  'nickname': newNickname,
-                }, SetOptions(merge: true));
-                
-                if (context.mounted) {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('닉네임이 변경되었습니다.')),
-                  );
-                }
-              } catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('닉네임 변경에 실패했습니다: $e')),
-                  );
-                }
-              }
-            },
-            child: const Text('저장'),
-          ),
-        ],
-      ),
-    );
-  }
 }

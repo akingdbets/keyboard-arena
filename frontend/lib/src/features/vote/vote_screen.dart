@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart'; // ★ 로그인 정보 가져오기용
+import 'package:share_plus/share_plus.dart';
 import '../profile/profile_screen.dart';
+import '../report/report_service.dart';
+import '../report/report_dialog.dart';
+import '../block/block_service.dart';
 
 class VoteScreen extends StatefulWidget {
   final String topicId; // 주제 ID (필수)
@@ -20,6 +24,8 @@ class VoteScreen extends StatefulWidget {
 class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMixin {
   // ★ 파이어베이스 DB 인스턴스
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final ReportService _reportService = ReportService();
+  final BlockService _blockService = BlockService();
 
   int? _selectedOptionIndex;
   String _commentSort = '최신순'; // 댓글 정렬: 최신순, 인기순
@@ -32,7 +38,6 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
   final ScrollController _scrollController = ScrollController(); // 스크롤 위치 저장용
 
   // 동적 옵션 데이터 (Firebase에서 가져옴)
-  List<String> _optionNames = [];
   List<Color> _optionColors = [
     Colors.blueAccent,
     Colors.redAccent,
@@ -51,6 +56,10 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
   Stream<DocumentSnapshot>? _topicStream;
   Stream<QuerySnapshot>? _commentsStream;
 
+  // 신고된 항목 추적 (로컬 상태)
+  final Set<String> _reportedComments = {}; // 신고된 댓글 ID
+  bool _isTopicReported = false; // 주제 신고 여부
+
   @override
   bool get wantKeepAlive => true; // 상태 유지
 
@@ -63,12 +72,56 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
     _commentsStream = _db.collection('topics').doc(widget.topicId).collection('comments').snapshots();
     
     _loadUserVote(); // 사용자의 이전 투표 정보 불러오기
+    _loadReportedItems(); // 신고한 항목 불러오기
     
     // 스크롤 위치 자동 저장
     _scrollController.addListener(_onScroll);
     
     // 포커스 노드 리스너 추가 (키보드가 올라올 때 스크롤 위치 유지)
     _commentFocusNode.addListener(_onFocusChange);
+  }
+  
+  // 신고한 항목 불러오기 (앱 재시작 시에도 유지)
+  Future<void> _loadReportedItems() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      // 신고한 주제 확인
+      final topicReports = await _db
+          .collection('reports')
+          .where('reporterId', isEqualTo: user.uid)
+          .where('targetId', isEqualTo: widget.topicId)
+          .where('targetType', isEqualTo: 'topic')
+          .limit(1)
+          .get();
+
+      if (topicReports.docs.isNotEmpty && mounted) {
+        setState(() {
+          _isTopicReported = true;
+        });
+      }
+
+      // 신고한 댓글 목록 불러오기
+      final commentReports = await _db
+          .collection('reports')
+          .where('reporterId', isEqualTo: user.uid)
+          .where('targetType', isEqualTo: 'comment')
+          .get();
+
+      if (mounted) {
+        setState(() {
+          for (var report in commentReports.docs) {
+            final targetId = report.data()['targetId'] as String?;
+            if (targetId != null) {
+              _reportedComments.add(targetId);
+            }
+          }
+        });
+      }
+    } catch (e) {
+      print('❌ 신고 항목 불러오기 에러: $e');
+    }
   }
   
   void _onScroll() {
@@ -906,6 +959,175 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
     }
   }
 
+  // 주제 공유 기능
+  Future<void> _shareTopic() async {
+    try {
+      print('📤 공유 시작: topicId=${widget.topicId}');
+      
+      // 주제 데이터 가져오기
+      final topicDoc = await _db.collection('topics').doc(widget.topicId).get();
+      
+      if (!topicDoc.exists) {
+        print('❌ 주제 문서가 존재하지 않음: ${widget.topicId}');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('주제를 찾을 수 없습니다.')),
+          );
+        }
+        return;
+      }
+      
+      final topicData = topicDoc.data();
+      if (topicData == null) {
+        print('❌ 주제 데이터가 null');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('주제 데이터를 불러올 수 없습니다.')),
+          );
+        }
+        return;
+      }
+      
+      final topicTitle = topicData['title'] as String? ?? '주제';
+      final options = (topicData['options'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [];
+      print('✅ 주제 제목: $topicTitle, 옵션 개수: ${options.length}');
+      
+      // 공유 텍스트 생성 (선택지 목록 포함)
+      final StringBuffer shareTextBuffer = StringBuffer();
+      shareTextBuffer.writeln('[Key War] 주제 투표에 참여해보세요! 🗳️');
+      shareTextBuffer.writeln('');
+      shareTextBuffer.writeln('🔥 주제: $topicTitle');
+      shareTextBuffer.writeln('');
+      
+      if (options.isNotEmpty) {
+        for (int i = 0; i < options.length; i++) {
+          shareTextBuffer.writeln('${i + 1}. ${options[i]}');
+        }
+        shareTextBuffer.writeln('');
+      }
+      
+      shareTextBuffer.writeln('지금 앱에서 투표하고 베댓을 확인하세요!');
+      
+      final shareText = shareTextBuffer.toString();
+      
+      print('📤 공유 텍스트 생성 완료, Share.share() 호출 중...');
+      
+      // 공유 실행
+      final result = await Share.share(shareText);
+      
+      print('✅ 공유 완료: ${result.status}');
+      
+      if (mounted && result.status == ShareResultStatus.success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('공유되었습니다.')),
+        );
+      }
+    } catch (e, stackTrace) {
+      print('❌ 주제 공유 에러: $e');
+      print('❌ 스택 트레이스: $stackTrace');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('공유 중 오류가 발생했습니다: ${e.toString()}'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  // 주제 신고 기능
+  Future<void> _reportTopic() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('로그인이 필요합니다.')),
+        );
+      }
+      return;
+    }
+
+    // 신고 사유 선택 다이얼로그 표시
+    final reason = await ReportDialog.show(context);
+    if (reason == null) return; // 사용자가 취소한 경우
+
+    try {
+      await _reportService.report(
+        targetId: widget.topicId,
+        targetType: 'topic',
+        reason: reason,
+      );
+
+      if (mounted) {
+        // 신고된 주제로 표시하고 화면에서 숨김
+        setState(() {
+          _isTopicReported = true;
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('신고가 접수되었습니다.')),
+        );
+      }
+    } catch (e) {
+      print('❌ 주제 신고 에러: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString().replaceFirst('Exception: ', '')),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // 댓글 신고 기능
+  Future<void> _reportComment(String commentId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('로그인이 필요합니다.')),
+        );
+      }
+      return;
+    }
+
+    // 신고 사유 선택 다이얼로그 표시
+    final reason = await ReportDialog.show(context);
+    if (reason == null) return; // 사용자가 취소한 경우
+
+    try {
+      await _reportService.report(
+        targetId: commentId,
+        targetType: 'comment',
+        reason: reason,
+      );
+
+      if (mounted) {
+        // 신고된 댓글을 Set에 추가하고 화면에서 숨김
+        setState(() {
+          _reportedComments.add(commentId);
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('신고가 접수되었습니다.')),
+        );
+      }
+    } catch (e) {
+      print('❌ 댓글 신고 에러: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString().replaceFirst('Exception: ', '')),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context); // AutomaticKeepAliveClientMixin 필수
@@ -920,6 +1142,35 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
       appBar: AppBar(
         title: const Text('주제 상세'),
         leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
+        actions: [
+          // 공유하기 버튼
+          IconButton(
+            icon: const Icon(Icons.share),
+            onPressed: _shareTopic,
+            tooltip: '공유하기',
+          ),
+          // 신고하기 메뉴
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) {
+              if (value == 'report') {
+                _reportTopic();
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'report',
+                child: Row(
+                  children: [
+                    Icon(Icons.flag_outlined, size: 20, color: Colors.red),
+                    SizedBox(width: 8),
+                    Text('이 주제 신고하기'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
       resizeToAvoidBottomInset: true, // 답글 입력창이 키보드 위로 올라오도록
       body: Column(
@@ -970,6 +1221,42 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
                               ElevatedButton(
                                 onPressed: () => Navigator.pop(context),
                                 child: const Text('돌아가기'),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+                      
+                      // 신고된 주제인 경우 '신고된 게시물입니다'로 표시
+                      if (_isTopicReported) {
+                        return Container(
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            color: cardBgColor,
+                            borderRadius: BorderRadius.circular(20),
+                            boxShadow: isDark ? [] : [BoxShadow(color: Colors.grey.withOpacity(0.2), blurRadius: 10, offset: const Offset(0, 5))],
+                          ),
+                          child: Column(
+                            children: [
+                              Icon(Icons.flag, size: 48, color: Colors.grey[400]),
+                              const SizedBox(height: 16),
+                              Text(
+                                '신고된 게시물입니다',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.grey[600],
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                '이 게시물은 신고되어 숨김 처리되었습니다.',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[500],
+                                ),
+                                textAlign: TextAlign.center,
                               ),
                             ],
                           ),
@@ -1042,15 +1329,26 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
                   const SizedBox(height: 24),
 
                   // 2. [실시간] 댓글 헤더 & 리스트
-                  StreamBuilder<QuerySnapshot>(
-                    stream: _commentsStream, // initState에서 초기화된 스트림 사용
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) return const Text("댓글 로딩 중...");
-                      
-                      final docs = snapshot.data!.docs;
-                      
-                      // 클라이언트에서 정렬
-                      final sortedDocs = List<QueryDocumentSnapshot>.from(docs);
+                  StreamBuilder<List<String>>(
+                    stream: _blockService.getBlockedUsersStream(),
+                    builder: (context, blockedUsersSnapshot) {
+                      return StreamBuilder<QuerySnapshot>(
+                        stream: _commentsStream, // initState에서 초기화된 스트림 사용
+                        builder: (context, snapshot) {
+                          if (!snapshot.hasData) return const Text("댓글 로딩 중...");
+                          
+                          final docs = snapshot.data!.docs;
+                          final blockedUserIds = blockedUsersSnapshot.data ?? [];
+                          
+                          // 클라이언트에서 정렬 및 신고된 댓글 필터링
+                          final reportedFilteredDocs = docs.where((doc) => !_reportedComments.contains(doc.id)).toList();
+                          // 차단한 사용자의 댓글 필터링
+                          final filteredDocs = reportedFilteredDocs.where((doc) {
+                            final data = doc.data() as Map<String, dynamic>;
+                            final authorId = data['uid'] as String?;
+                            return authorId != null && !blockedUserIds.contains(authorId);
+                          }).toList();
+                          final sortedDocs = List<QueryDocumentSnapshot>.from(filteredDocs);
                       if (_commentSort == '인기순') {
                         sortedDocs.sort((a, b) {
                           final aData = a.data() as Map<String, dynamic>;
@@ -1186,10 +1484,17 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
                                     topicId: widget.topicId,
                                     onReplyTap: () => _startReply(doc.id, data['author']),
                                     onDelete: () => _deleteComment(doc.id, widget.topicId),
+                                    onReport: data['uid'] != FirebaseAuth.instance.currentUser?.uid
+                                        ? () => _reportComment(doc.id)
+                                        : null,
                                   ),
-                                  // 대댓글 (삭제된 댓글도 표시)
+                                  // 대댓글 (삭제된 댓글도 표시, 차단한 사용자 제외)
                                   if (replies.isNotEmpty)
-                                    ...replies.map<Widget>((reply) {
+                                    ...replies.where((reply) {
+                                      final replyData = reply as Map<String, dynamic>;
+                                      final replyAuthorId = replyData['uid'] as String?;
+                                      return replyAuthorId != null && !blockedUserIds.contains(replyAuthorId);
+                                    }).map<Widget>((reply) {
                                       final replyData = reply as Map<String, dynamic>;
                                       final replyIsDeleted = replyData['isDeleted'] == true;
                                       final currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -1207,6 +1512,7 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
                                           topicId: widget.topicId,
                                           replyIndex: replies.indexOf(reply),
                                           onDelete: (isMyReply && !replyIsDeleted) ? () => _deleteReply(doc.id, widget.topicId, replies.indexOf(reply)) : null,
+                                          onReport: (!isMyReply && !replyIsDeleted) ? () => _reportComment(doc.id) : null,
                                         ),
                                       );
                                     }).toList(),
@@ -1215,6 +1521,8 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
                             },
                           ),
                         ],
+                      );
+                        },
                       );
                     },
                   ),
@@ -1397,6 +1705,7 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
     int? replyIndex,
     VoidCallback? onReplyTap,
     VoidCallback? onDelete,
+    VoidCallback? onReport,
   }) {
     return _CommentItemWidget(
       key: ValueKey('${commentId}_${replyIndex ?? 'main'}'), // 고유 키
@@ -1412,6 +1721,7 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
       onDelete: onDelete,
       scrollController: _scrollController,
       onToggleLike: (item, commentId, topicId, replyIndex) => _toggleLike(item, commentId, topicId, replyIndex),
+      onReport: commentId != null ? () => _reportComment(commentId) : null,
     );
   }
 }
@@ -1428,6 +1738,7 @@ class _CommentItemWidget extends StatefulWidget {
   final int? replyIndex;
   final VoidCallback? onReplyTap;
   final VoidCallback? onDelete;
+  final VoidCallback? onReport;
   final ScrollController scrollController;
   final Function(Map<String, dynamic>, String?, String?, int?) onToggleLike;
 
@@ -1443,6 +1754,7 @@ class _CommentItemWidget extends StatefulWidget {
     this.replyIndex,
     this.onReplyTap,
     this.onDelete,
+    this.onReport,
     required this.scrollController,
     required this.onToggleLike,
   });
@@ -1600,6 +1912,23 @@ class _CommentItemWidgetState extends State<_CommentItemWidget> with AutomaticKe
                           ),
                         ),
                       ),
+                      // 자신이 작성한 댓글이 아닐 경우 신고 버튼 표시
+                      if (widget.item['uid'] != FirebaseAuth.instance.currentUser?.uid && widget.onReport != null) ...[
+                        const SizedBox(width: 16),
+                        GestureDetector(
+                          onTap: widget.onReport,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
+                            child: Row(
+                              children: [
+                                Icon(Icons.flag_outlined, size: 18, color: Colors.grey[600]),
+                                const SizedBox(width: 4),
+                                Text('신고', style: TextStyle(color: Colors.grey[600], fontSize: 14)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                       // 자신이 작성한 댓글에만 삭제 버튼 표시
                       if (widget.item['uid'] == FirebaseAuth.instance.currentUser?.uid && widget.onDelete != null) ...[
                         const SizedBox(width: 16),
