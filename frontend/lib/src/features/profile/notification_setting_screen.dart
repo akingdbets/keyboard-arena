@@ -1,30 +1,99 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class NotificationSettingScreen extends StatefulWidget {
   const NotificationSettingScreen({super.key});
-
-  // ★ 다른 화면(투표, 프로필)에서 참고할 전역 변수들
-  // (실제 앱에서는 서버나 로컬 저장소에 저장해야 함)
-  static bool isMyProfilePublic = true; 
 
   @override
   State<NotificationSettingScreen> createState() => _NotificationSettingScreenState();
 }
 
 class _NotificationSettingScreenState extends State<NotificationSettingScreen> {
-  // 알림 설정 상태 변수들 (화면 안에서만 쓰임)
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  
+  // 알림 설정 상태 변수들
+  bool _isProfilePublic = true;
   bool _notifyTopicComments = true;   // 내가 생성한 주제에 댓글
   bool _notifyCommentReplies = true;  // 내가 단 댓글에 답글
   bool _notifyCommentLikes = false;   // 내가 단 댓글에 공감
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  // Firestore에서 설정 불러오기
+  Future<void> _loadSettings() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final userDoc = await _db.collection('users').doc(user.uid).get();
+      if (userDoc.exists) {
+        final data = userDoc.data();
+        setState(() {
+          _isProfilePublic = data?['isPublic'] as bool? ?? true;
+          _notifyTopicComments = data?['notifyTopicComments'] as bool? ?? true;
+          _notifyCommentReplies = data?['notifyCommentReplies'] as bool? ?? true;
+          _notifyCommentLikes = data?['notifyCommentLikes'] as bool? ?? false;
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print("설정 불러오기 에러: $e");
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  // Firestore에 설정 저장
+  Future<void> _saveSettings() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      await _db.collection('users').doc(user.uid).set({
+        'isPublic': _isProfilePublic,
+        'notifyTopicComments': _notifyTopicComments,
+        'notifyCommentReplies': _notifyCommentReplies,
+        'notifyCommentLikes': _notifyCommentLikes,
+      }, SetOptions(merge: true));
+    } catch (e) {
+      print("설정 저장 에러: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('설정 저장에 실패했습니다: ${e.toString()}')),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final sectionTitleColor = isDark ? Colors.grey[400] : Colors.grey[700];
 
+    if (_isLoading) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('앱 설정'),
+        ),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('앱 설정'), // ★ 타이틀 변경
+        title: const Text('앱 설정'),
       ),
       body: ListView(
         children: [
@@ -38,21 +107,22 @@ class _NotificationSettingScreenState extends State<NotificationSettingScreen> {
           SwitchListTile(
             title: const Text('프로필 공개'),
             subtitle: Text(
-              NotificationSettingScreen.isMyProfilePublic 
+              _isProfilePublic 
                   ? '모든 사람이 내 활동 내역을 볼 수 있습니다.' 
                   : '나만 내 활동 내역을 볼 수 있습니다.',
               style: TextStyle(fontSize: 12, color: Colors.grey[600]),
             ),
-            value: NotificationSettingScreen.isMyProfilePublic,
+            value: _isProfilePublic,
             activeColor: const Color(0xFFE91E63),
             onChanged: (value) {
               setState(() {
-                NotificationSettingScreen.isMyProfilePublic = value;
+                _isProfilePublic = value;
               });
+              _saveSettings();
             },
             secondary: Icon(
-              NotificationSettingScreen.isMyProfilePublic ? Icons.lock_open : Icons.lock,
-              color: NotificationSettingScreen.isMyProfilePublic ? Colors.green : Colors.grey,
+              _isProfilePublic ? Icons.lock_open : Icons.lock,
+              color: _isProfilePublic ? Colors.green : Colors.grey,
             ),
           ),
           
@@ -76,6 +146,7 @@ class _NotificationSettingScreenState extends State<NotificationSettingScreen> {
               setState(() {
                 _notifyTopicComments = value;
               });
+              _saveSettings();
             },
             secondary: const Icon(Icons.campaign_outlined),
           ),
@@ -90,6 +161,7 @@ class _NotificationSettingScreenState extends State<NotificationSettingScreen> {
               setState(() {
                 _notifyCommentReplies = value;
               });
+              _saveSettings();
             },
             secondary: const Icon(Icons.chat_bubble_outline),
           ),
@@ -104,6 +176,7 @@ class _NotificationSettingScreenState extends State<NotificationSettingScreen> {
               setState(() {
                 _notifyCommentLikes = value;
               });
+              _saveSettings();
             },
             secondary: const Icon(Icons.favorite_border),
           ),

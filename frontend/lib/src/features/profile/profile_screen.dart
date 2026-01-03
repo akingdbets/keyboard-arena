@@ -48,6 +48,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  // 투표 개수 가져오기 (삭제된 주제의 투표 제외)
+  Future<int> _getVoteCount(String userId) async {
+    try {
+      final votesSnapshot = await _db.collection('users').doc(userId).collection('votes').get();
+      int validVoteCount = 0;
+      
+      // 각 투표의 주제가 존재하는지 확인
+      for (var voteDoc in votesSnapshot.docs) {
+        final topicId = voteDoc.id;
+        final topicDoc = await _db.collection('topics').doc(topicId).get();
+        
+        // 주제가 존재하면 카운트에 포함
+        if (topicDoc.exists) {
+          validVoteCount++;
+        }
+      }
+      
+      return validVoteCount;
+    } catch (e) {
+      print("투표 개수 계산 에러: $e");
+      return 0;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -131,7 +155,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             userName,
                             style: const TextStyle(color: Color(0xFFBB86FC), fontWeight: FontWeight.bold, fontSize: 16),
                           ),
-                          if (!isPublic || (isMe && !NotificationSettingScreen.isMyProfilePublic)) ...[
+                          if (!isPublic) ...[
                             const SizedBox(width: 8),
                             Icon(Icons.lock, size: 14, color: Colors.grey[600]),
                           ]
@@ -169,21 +193,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 StreamBuilder<QuerySnapshot>(
                   stream: _db.collection('topics').where('authorId', isEqualTo: targetUserId).snapshots(),
                   builder: (context, topicsSnapshot) {
-                    return StreamBuilder<QuerySnapshot>(
-                      stream: _db.collection('users').doc(targetUserId).collection('votes').snapshots(),
-                      builder: (context, votesSnapshot) {
+                    return FutureBuilder<int>(
+                      future: _getVoteCount(targetUserId), // 삭제된 주제 제외한 투표 개수
+                      builder: (context, voteCountSnapshot) {
                         return FutureBuilder<int>(
                           future: _getCommentCount(targetUserId),
                           builder: (context, commentSnapshot) {
                             final topicCount = topicsSnapshot.hasData ? topicsSnapshot.data!.docs.length : 0;
                             final commentCount = commentSnapshot.hasData ? commentSnapshot.data! : 0;
-                            final voteCount = votesSnapshot.hasData ? votesSnapshot.data!.docs.length : 0;
+                            final voteCount = voteCountSnapshot.hasData ? voteCountSnapshot.data! : 0;
                             
                             // 디버깅 로그
                             if (topicsSnapshot.hasData) {
                               print("📊 주제 개수: $topicCount");
                             }
-                            if (votesSnapshot.hasData) {
+                            if (voteCountSnapshot.hasData) {
                               print("📊 투표 개수: $voteCount");
                             }
                             if (commentSnapshot.hasData) {
@@ -286,6 +310,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             });
 
             return ListView.builder(
+              key: const PageStorageKey<String>('profile_comments'), // 스크롤 위치 유지
               padding: const EdgeInsets.all(16),
               itemCount: sortedDocs.length > 50 ? 50 : sortedDocs.length,
               itemBuilder: (context, index) {
@@ -297,6 +322,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 
                 final currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
                 final isMyComment = data['uid'] == currentUserId;
+                final isDeleted = data['isDeleted'] == true;
                 
                 return _buildActivityItem(
                   topicTitle: '주제 보기',
@@ -316,7 +342,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       );
                     }
                   },
-                  onDelete: isMyComment ? () => _deleteComment(context, topicId, doc.id, isDark) : null,
+                  onDelete: (isMyComment && !isDeleted) ? () => _deleteComment(context, topicId, doc.id, isDark) : null,
                 );
               },
             );
@@ -415,6 +441,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         });
 
         return ListView.builder(
+          key: const PageStorageKey<String>('profile_votes'), // 스크롤 위치 유지
           padding: const EdgeInsets.all(16),
           itemCount: sortedDocs.length,
           itemBuilder: (context, index) {
@@ -433,31 +460,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   );
                 }
 
+                // 에러가 있거나 주제가 존재하지 않으면 아예 표시하지 않음
                 if (topicSnapshot.hasError) {
-                  return _buildActivityItem(
-                    topicTitle: '주제를 불러올 수 없음',
-                    badge: '에러',
-                    content: '주제가 삭제되었거나 접근할 수 없습니다',
-                    date: _formatDate(voteData?['votedAt'] as Timestamp?),
-                    isDark: isDark,
-                    onTap: null,
-                  );
+                  return const SizedBox.shrink();
                 }
 
                 if (!topicSnapshot.hasData || !topicSnapshot.data!.exists) {
-                  return _buildActivityItem(
-                    topicTitle: '삭제된 주제',
-                    badge: '삭제됨',
-                    content: '이 주제는 더 이상 존재하지 않습니다',
-                    date: _formatDate(voteData?['votedAt'] as Timestamp?),
-                    isDark: isDark,
-                    onTap: null,
-                  );
+                  return const SizedBox.shrink();
                 }
 
                 final topicData = topicSnapshot.data!.data() as Map<String, dynamic>?;
                 if (topicData == null) {
-                  return const SizedBox();
+                  return const SizedBox.shrink();
                 }
 
                 final title = topicData['title'] ?? '제목 없음';
@@ -546,6 +560,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         });
 
         return ListView.builder(
+          key: const PageStorageKey<String>('profile_topics'), // 스크롤 위치 유지
           padding: const EdgeInsets.all(16),
           itemCount: sortedDocs.length > 50 ? 50 : sortedDocs.length,
           itemBuilder: (context, index) {
@@ -629,7 +644,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (confirmed != true) return;
 
     try {
-      await _db.collection('topics').doc(topicId).collection('comments').doc(commentId).delete();
+      // Soft Delete: 문서를 삭제하지 않고 isDeleted 플래그와 content를 업데이트
+      await _db.collection('topics').doc(topicId).collection('comments').doc(commentId).update({
+        'isDeleted': true,
+        'content': '삭제된 댓글입니다',
+        'author': '알 수 없음',
+      });
       
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

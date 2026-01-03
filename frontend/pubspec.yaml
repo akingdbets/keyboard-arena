@@ -34,6 +34,7 @@ dependencies:
   firebase_core: ^3.6.0
   cloud_firestore: ^5.4.0
   firebase_auth: ^5.3.4     # (로그인 담당)
+  firebase_messaging: ^15.1.3  # (FCM 푸시 알림)
   google_sign_in: ^6.2.2    # (구글 버튼 담당)
   image_picker: ^1.0.7      # (이미지 선택)
   crop_your_image: ^2.0.0   # (이미지 크롭 - 오버레이 방식)
@@ -53,6 +54,8 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.4.7
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -66,9 +69,8 @@ flutter:
   uses-material-design: true
 
   # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  assets:
+    - assets/icon/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
@@ -95,3 +97,18 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/icon/icon.png"
+  min_sdk_android: 21 # 안드로이드 호환성
+  remove_alpha_ios: true
+
+flutter_native_splash:
+  color: "#000000" # 배경색: 완전 검정
+  image: "assets/icon/icon.png" # 로고 이미지 (배경 투명 권장)
+  android_12:
+    image: "assets/icon/icon.png"
+    color: "#000000"
+  web: false

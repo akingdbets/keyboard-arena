@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'main_drawer.dart';
 import '../vote/vote_screen.dart';
+import '../profile/notification_history_screen.dart';
 import 'create_topic_screen.dart';
 
 class FeedScreen extends StatefulWidget {
@@ -118,9 +119,19 @@ class _FeedScreenState extends State<FeedScreen> {
     return Scaffold(
       drawer: const MainDrawer(),
       appBar: AppBar(
-        title: const Text('키보드 아레나', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text('Key War', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
-          IconButton(icon: const Icon(Icons.notifications_none), onPressed: () {}),
+          IconButton(
+            icon: const Icon(Icons.notifications_none),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const NotificationHistoryScreen(),
+                ),
+              );
+            },
+          ),
         ],
       ),
       floatingActionButton: Container(
@@ -572,7 +583,7 @@ class _ArenaCardState extends State<ArenaCard> {
           throw Exception('주제를 찾을 수 없습니다.');
         }
 
-        final data = snapshot.data() as Map<String, dynamic>?;
+        final data = snapshot.data();
         if (data == null) {
           throw Exception('주제 데이터를 읽을 수 없습니다.');
         }

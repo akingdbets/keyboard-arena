@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart'; // ★ 로그인 정보 가져오기용
 import '../profile/profile_screen.dart';
-import '../profile/notification_setting_screen.dart';
 
 class VoteScreen extends StatefulWidget {
   final String topicId; // 주제 ID (필수)
@@ -244,7 +243,7 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
           throw Exception('주제를 찾을 수 없습니다.');
         }
 
-        final data = snapshot.data() as Map<String, dynamic>?;
+        final data = snapshot.data();
         if (data == null) {
           print("❌ 주제 데이터가 null");
           throw Exception('주제 데이터를 읽을 수 없습니다.');
@@ -325,6 +324,102 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
     }
   }
 
+  // 알림 생성 헬퍼 함수
+  Future<void> _createNotification({
+    required String targetUserId,
+    required String type,
+    required String message,
+    String? topicId,
+    String? commentId,
+  }) async {
+    // 자기 자신에게는 알림 생성하지 않음
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null || targetUserId == currentUser.uid) return;
+
+    try {
+      // 알림 설정 확인
+      final targetUserDoc = await _db.collection('users').doc(targetUserId).get();
+      if (!targetUserDoc.exists) return;
+
+      final targetUserData = targetUserDoc.data();
+      bool shouldSendPush = false;
+
+      // 알림 설정 확인
+      switch (type) {
+        case 'topic_comment':
+          shouldSendPush = targetUserData?['notifyTopicComments'] as bool? ?? true;
+          break;
+        case 'comment_reply':
+          shouldSendPush = targetUserData?['notifyCommentReplies'] as bool? ?? true;
+          break;
+        case 'comment_like':
+          shouldSendPush = targetUserData?['notifyCommentLikes'] as bool? ?? false;
+          break;
+      }
+
+      // 알림 기록 저장 (알림 설정과 무관하게 항상 저장)
+      // (요구사항: 알림 기록 페이지에서는 설정과 무관하게 모두 표시)
+      final notificationRef = await _db.collection('users').doc(targetUserId).collection('notifications').add({
+        'type': type,
+        'message': message,
+        'topicId': topicId,
+        'commentId': commentId,
+        'createdAt': FieldValue.serverTimestamp(),
+        'isRead': false,
+      });
+
+      // FCM 푸시 알림 전송 (설정이 켜져있고 FCM 토큰이 있는 경우)
+      final fcmToken = targetUserData?['fcmToken'] as String?;
+      print('🔔 알림 생성: targetUserId=$targetUserId, type=$type, shouldSendPush=$shouldSendPush, fcmToken=${fcmToken != null ? fcmToken.substring(0, 20) + "..." : "null"}');
+      
+      if (shouldSendPush && fcmToken != null && fcmToken.isNotEmpty) {
+        try {
+          // Cloud Functions 트리거를 위한 데이터 저장
+          // 실제 푸시 알림은 Cloud Functions에서 처리합니다
+          final pushRef = await _db.collection('push_notifications').add({
+            'targetUserId': targetUserId,
+            'fcmToken': fcmToken,
+            'title': _getNotificationTitle(type),
+            'body': message,
+            'data': {
+              'type': type,
+              'topicId': topicId,
+              'commentId': commentId,
+              'notificationId': notificationRef.id,
+            },
+            'createdAt': FieldValue.serverTimestamp(),
+            'sent': false,
+          });
+          print('✅ FCM 푸시 알림 요청 저장 완료: pushId=${pushRef.id}, targetUserId=$targetUserId');
+        } catch (e) {
+          print('❌ FCM 푸시 알림 요청 저장 실패: $e');
+        }
+      } else {
+        if (!shouldSendPush) {
+          print('⚠️ 알림 설정이 꺼져있어 푸시 알림을 전송하지 않습니다: type=$type');
+        } else if (fcmToken == null || fcmToken.isEmpty) {
+          print('⚠️ FCM 토큰이 없어 푸시 알림을 전송하지 않습니다: targetUserId=$targetUserId');
+        }
+      }
+    } catch (e) {
+      print("알림 생성 에러: $e");
+    }
+  }
+
+  // 알림 타입에 따른 제목 반환
+  String _getNotificationTitle(String type) {
+    switch (type) {
+      case 'topic_comment':
+        return '새로운 댓글';
+      case 'comment_reply':
+        return '새로운 답글';
+      case 'comment_like':
+        return '공감 알림';
+      default:
+        return '알림';
+    }
+  }
+
   // [기능 2] 댓글 쓰기 (로그인 유저 정보 연동)
   Future<void> _addComment() async {
     if (_commentController.text.isEmpty) return;
@@ -336,27 +431,64 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
       return;
     }
 
-    // 2. 내 닉네임 가져오기 (DB에서 조회)
+    // 2. 내 닉네임 및 프로필 공개 설정 가져오기 (DB에서 조회)
     final userDoc = await _db.collection('users').doc(user.uid).get();
     String myNickname = '알 수 없음';
+    bool isPublic = true;
     if (userDoc.exists) {
-      myNickname = userDoc.data()?['nickname'] ?? '익명 유저';
+      final data = userDoc.data();
+      myNickname = data?['nickname'] ?? '익명 유저';
+      isPublic = data?['isPublic'] as bool? ?? true;
     }
 
     // 뱃지(선택한 투표 옵션) 설정
+    // 주제 데이터와 사용자 투표 정보를 직접 가져와서 뱃지 설정
     String badgeText = '관전';
-    int badgeColorValue = Colors.grey.value; 
-
-    if (_selectedOptionIndex != null && _selectedOptionIndex! < _optionNames.length) {
-      badgeText = _optionNames[_selectedOptionIndex!].split(' ')[0]; 
-      badgeColorValue = _optionColors[_selectedOptionIndex! % _optionColors.length].value;
+    int badgeColorValue = Colors.grey.value;
+    
+    try {
+      // 주제 데이터 가져오기 (옵션 이름 확인용)
+      final topicDoc = await _db.collection('topics').doc(widget.topicId).get();
+      if (topicDoc.exists) {
+        final topicData = topicDoc.data();
+        final List<String> options = List<String>.from(topicData?['options'] ?? []);
+        
+        // 사용자 투표 정보 가져오기
+        int? optionIndex = _selectedOptionIndex;
+        if (optionIndex == null || optionIndex >= options.length) {
+          final userVoteDoc = await _db
+              .collection('users')
+              .doc(user.uid)
+              .collection('votes')
+              .doc(widget.topicId)
+              .get();
+          
+          if (userVoteDoc.exists) {
+            final voteData = userVoteDoc.data();
+            optionIndex = voteData?['optionIndex'] as int?;
+          }
+        }
+        
+        // 옵션 인덱스가 유효하면 뱃지 설정
+        if (optionIndex != null && optionIndex >= 0 && optionIndex < options.length) {
+          badgeText = options[optionIndex].split(' ')[0]; // 첫 번째 단어만 추출
+          badgeColorValue = _optionColors[optionIndex % _optionColors.length].value;
+          print('✅ 뱃지 설정: optionIndex=$optionIndex, badgeText=$badgeText');
+        } else {
+          print('⚠️ 유효하지 않은 optionIndex: $optionIndex, options.length=${options.length}');
+        }
+      } else {
+        print('⚠️ 주제 문서가 존재하지 않음: ${widget.topicId}');
+      }
+    } catch (e) {
+      print("❌ 뱃지 설정 에러: $e");
     }
 
     // 3. 전송할 데이터 만들기
     final newComment = {
       'uid': user.uid, // 작성자 고유 ID
       'author': myNickname, // ★ DB에서 가져온 익명 닉네임
-      'isPublic': NotificationSettingScreen.isMyProfilePublic,
+      'isPublic': isPublic,
       'content': _commentController.text,
       'badge': badgeText,
       'badgeColor': badgeColorValue,
@@ -370,16 +502,52 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
     _saveScrollPosition();
     final savedPos = _savedScrollPosition;
     
+    String? commentDocId;
     if (_replyingToDocId != null) {
       // 대댓글: 해당 댓글 문서의 'replies' 배열에 추가
       final commentRef = _db.collection('topics').doc(widget.topicId).collection('comments').doc(_replyingToDocId);
       await commentRef.update({
         'replies': FieldValue.arrayUnion([newComment])
       });
+      
+      // 답글 알림 생성
+      final parentCommentDoc = await commentRef.get();
+      if (parentCommentDoc.exists) {
+        final parentData = parentCommentDoc.data();
+        final parentAuthorId = parentData?['uid'] as String?;
+        if (parentAuthorId != null) {
+          await _createNotification(
+            targetUserId: parentAuthorId,
+            type: 'comment_reply',
+            message: '$myNickname님이 댓글에 답글을 남겼습니다.',
+            topicId: widget.topicId,
+            commentId: _replyingToDocId,
+          );
+        }
+      }
+      
       setState(() => _replyingToDocId = null);
     } else {
       // 일반 댓글: comments 컬렉션에 새 문서 추가
-      await _db.collection('topics').doc(widget.topicId).collection('comments').add(newComment);
+      final docRef = await _db.collection('topics').doc(widget.topicId).collection('comments').add(newComment);
+      commentDocId = docRef.id;
+      
+      // 주제 작성자에게 댓글 알림 생성
+      final topicDoc = await _db.collection('topics').doc(widget.topicId).get();
+      if (topicDoc.exists) {
+        final topicData = topicDoc.data();
+        final topicAuthorId = topicData?['authorId'] as String?;
+        if (topicAuthorId != null) {
+          final topicTitle = topicData?['title'] as String? ?? '주제';
+          await _createNotification(
+            targetUserId: topicAuthorId,
+            type: 'topic_comment',
+            message: '$myNickname님이 "$topicTitle" 주제에 댓글을 남겼습니다.',
+            topicId: widget.topicId,
+            commentId: commentDocId,
+          );
+        }
+      }
     }
 
     _commentController.clear();
@@ -493,7 +661,37 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
     final savedPos = _savedScrollPosition;
 
     try {
-      await _db.collection('topics').doc(topicId).collection('comments').doc(commentId).delete();
+      // 먼저 댓글 문서를 읽어서 replies 배열 확인
+      final commentRef = _db.collection('topics').doc(topicId).collection('comments').doc(commentId);
+      final commentDoc = await commentRef.get();
+      
+      if (!commentDoc.exists) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('댓글을 찾을 수 없습니다.'), backgroundColor: Colors.red),
+          );
+        }
+        _restoreScrollToPosition(savedPos);
+        return;
+      }
+      
+      final commentData = commentDoc.data();
+      final replies = commentData?['replies'] as List<dynamic>? ?? [];
+      final hasReplies = replies.isNotEmpty;
+      
+      if (hasReplies) {
+        // 대댓글이 있는 경우: Soft Delete (문서 유지, 필드만 변경)
+        await commentRef.update({
+          'isDeleted': true,
+          'content': '삭제된 댓글입니다',
+          'author': '(알 수 없음)',
+        });
+        print('✅ Soft Delete: 대댓글이 있어서 문서는 유지하고 필드만 변경');
+      } else {
+        // 대댓글이 없는 경우: Hard Delete (문서 완전 삭제)
+        await commentRef.delete();
+        print('✅ Hard Delete: 대댓글이 없어서 문서를 완전히 삭제');
+      }
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -503,7 +701,7 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
       
       _restoreScrollToPosition(savedPos);
     } catch (e) {
-      print("댓글 삭제 에러: $e");
+      print("❌ 댓글 삭제 에러: $e");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('댓글 삭제에 실패했습니다: ${e.toString()}'), backgroundColor: Colors.red),
@@ -523,7 +721,7 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
       return;
     }
 
-    if (topicId == null || commentId == null) return;
+    if (topicId == null) return;
 
     // 삭제 확인 다이얼로그
     final confirmed = await showDialog<bool>(
@@ -559,7 +757,15 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
       final replies = List<Map<String, dynamic>>.from(commentDoc.data()?['replies'] ?? []);
       if (replyIndex >= replies.length) return;
 
-      replies.removeAt(replyIndex);
+      // Soft Delete: 답글을 배열에서 제거하지 않고 isDeleted 플래그와 content를 업데이트
+      final reply = replies[replyIndex];
+      replies[replyIndex] = {
+        ...reply,
+        'isDeleted': true,
+        'content': '삭제된 답글입니다',
+        'author': '알 수 없음',
+      };
+      
       await commentRef.update({'replies': replies});
       
       if (mounted) {
@@ -626,12 +832,27 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
             'likedBy': likedBy,
             'likes': currentLikes + 1,
           };
+          
+          // 답글 작성자에게 공감 알림 생성
+          final replyAuthorId = reply['uid'] as String?;
+          if (replyAuthorId != null) {
+            final currentUserDoc = await _db.collection('users').doc(user.uid).get();
+            final currentUserNickname = currentUserDoc.data()?['nickname'] as String? ?? '익명 유저';
+            
+            await _createNotification(
+              targetUserId: replyAuthorId,
+              type: 'comment_like',
+              message: '$currentUserNickname님이 답글에 공감을 남겼습니다.',
+              topicId: topicId,
+              commentId: commentId,
+            );
+          }
         }
 
         await commentRef.update({'replies': replies});
       } else {
         // 일반 댓글인 경우
-        if (commentId == null || topicId == null) return;
+        if (commentId == null) return;
         final commentRef = _db.collection('topics').doc(topicId).collection('comments').doc(commentId);
         final commentDoc = await commentRef.get();
         if (!commentDoc.exists) return;
@@ -653,6 +874,21 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
             'likedBy': likedBy,
             'likes': currentLikes + 1,
           });
+          
+          // 댓글 작성자에게 공감 알림 생성
+          final commentAuthorId = commentDoc.data()?['uid'] as String?;
+          if (commentAuthorId != null) {
+            final currentUserDoc = await _db.collection('users').doc(user.uid).get();
+            final currentUserNickname = currentUserDoc.data()?['nickname'] as String? ?? '익명 유저';
+            
+            await _createNotification(
+              targetUserId: commentAuthorId,
+              type: 'comment_like',
+              message: '$currentUserNickname님이 댓글에 공감을 남겼습니다.',
+              topicId: topicId,
+              commentId: commentId,
+            );
+          }
         }
       }
       
@@ -846,12 +1082,26 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
                         });
                       }
 
-                      // 댓글 개수 계산 (답글 포함)
-                      int totalCommentCount = sortedDocs.length;
+                      // 댓글 개수 계산 (답글 포함, 삭제된 댓글/답글 제외)
+                      int totalCommentCount = 0;
                       for (var doc in sortedDocs) {
                         final data = doc.data() as Map<String, dynamic>;
+                        final isDeleted = data['isDeleted'] == true;
+                        
+                        // 삭제되지 않은 댓글만 카운트
+                        if (!isDeleted) {
+                          totalCommentCount++;
+                        }
+                        
+                        // 답글 개수 계산 (삭제된 답글 제외)
                         final replies = data['replies'] as List<dynamic>? ?? [];
-                        totalCommentCount += replies.length;
+                        for (var reply in replies) {
+                          final replyData = reply as Map<String, dynamic>;
+                          final replyIsDeleted = replyData['isDeleted'] == true;
+                          if (!replyIsDeleted) {
+                            totalCommentCount++;
+                          }
+                        }
                       }
 
                       return Column(
@@ -937,10 +1187,14 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
                                     onReplyTap: () => _startReply(doc.id, data['author']),
                                     onDelete: () => _deleteComment(doc.id, widget.topicId),
                                   ),
-                                  // 대댓글
+                                  // 대댓글 (삭제된 댓글도 표시)
                                   if (replies.isNotEmpty)
                                     ...replies.map<Widget>((reply) {
                                       final replyData = reply as Map<String, dynamic>;
+                                      final replyIsDeleted = replyData['isDeleted'] == true;
+                                      final currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
+                                      final isMyReply = replyData['uid'] == currentUserId;
+                                      
                                       return Padding(
                                         padding: const EdgeInsets.only(left: 32.0),
                                         child: _buildCommentItem(
@@ -952,7 +1206,7 @@ class _VoteScreenState extends State<VoteScreen> with AutomaticKeepAliveClientMi
                                           commentId: doc.id,
                                           topicId: widget.topicId,
                                           replyIndex: replies.indexOf(reply),
-                                          onDelete: () => _deleteReply(doc.id, widget.topicId, replies.indexOf(reply)),
+                                          onDelete: (isMyReply && !replyIsDeleted) ? () => _deleteReply(doc.id, widget.topicId, replies.indexOf(reply)) : null,
                                         ),
                                       );
                                     }).toList(),
@@ -1205,6 +1459,12 @@ class _CommentItemWidgetState extends State<_CommentItemWidget> with AutomaticKe
   Widget build(BuildContext context) {
     super.build(context); // AutomaticKeepAliveClientMixin 필수
     
+    // Soft Delete 처리: isDeleted가 true인 경우 UI 변경
+    final bool isDeleted = widget.item['isDeleted'] == true;
+    final String displayAuthor = isDeleted ? '(알 수 없음)' : (widget.item['author'] ?? '익명 유저');
+    final String displayContent = isDeleted ? '삭제된 댓글입니다' : (widget.item['content'] ?? '');
+    final Color contentColor = isDeleted ? Colors.grey[600]! : widget.textColor;
+    
     String timeStr = '방금 전';
     if (widget.item['time'] is Timestamp) {
       DateTime d = (widget.item['time'] as Timestamp).toDate();
@@ -1258,8 +1518,15 @@ class _CommentItemWidgetState extends State<_CommentItemWidget> with AutomaticKe
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           GestureDetector(
-            onTap: _goToUserProfile,
-            child: CircleAvatar(backgroundColor: Colors.grey[800], radius: widget.isReply ? 12 : 18, child: Text(widget.item['author'][0], style: TextStyle(color: Colors.white, fontSize: widget.isReply ? 10 : 14))),
+            onTap: isDeleted ? null : _goToUserProfile,
+            child: CircleAvatar(
+              backgroundColor: Colors.grey[800], 
+              radius: widget.isReply ? 12 : 18, 
+              child: Text(
+                isDeleted ? '?' : (widget.item['author']?[0] ?? '?'), 
+                style: TextStyle(color: Colors.white, fontSize: widget.isReply ? 10 : 14)
+              ),
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1268,7 +1535,17 @@ class _CommentItemWidgetState extends State<_CommentItemWidget> with AutomaticKe
               children: [
                 Row(
                   children: [
-                    GestureDetector(onTap: _goToUserProfile, child: Text(widget.item['author'], style: TextStyle(fontWeight: FontWeight.bold, color: const Color(0xFFBB86FC), fontSize: widget.isReply ? 13 : 14))),
+                    GestureDetector(
+                      onTap: isDeleted ? null : _goToUserProfile,
+                      child: Text(
+                        displayAuthor,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: isDeleted ? Colors.grey[600]! : const Color(0xFFBB86FC),
+                          fontSize: widget.isReply ? 13 : 14,
+                        ),
+                      ),
+                    ),
                     const SizedBox(width: 6),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -1280,66 +1557,69 @@ class _CommentItemWidgetState extends State<_CommentItemWidget> with AutomaticKe
                   ],
                 ),
                 const SizedBox(height: 6),
-                Text(widget.item['content'], style: TextStyle(fontSize: 14, height: 1.4, color: widget.textColor)),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    if (!widget.isReply)
-                      GestureDetector(
-                        onTap: widget.onReplyTap,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
-                          child: Text('답글', style: TextStyle(color: Colors.grey[600], fontSize: 14, fontWeight: FontWeight.bold)),
+                Text(displayContent, style: TextStyle(fontSize: 14, height: 1.4, color: contentColor, fontStyle: isDeleted ? FontStyle.italic : FontStyle.normal)),
+                // 삭제된 댓글은 버튼들을 모두 숨김
+                if (!isDeleted) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      if (!widget.isReply)
+                        GestureDetector(
+                          onTap: widget.onReplyTap,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
+                            child: Text('답글', style: TextStyle(color: Colors.grey[600], fontSize: 14, fontWeight: FontWeight.bold)),
+                          ),
                         ),
-                      ),
-                    if (!widget.isReply) const SizedBox(width: 16),
-                    GestureDetector(
-                      onTap: () {
-                        if (widget.topicId != null) {
-                          widget.onToggleLike(widget.item, widget.commentId, widget.topicId, widget.replyIndex);
-                        }
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
-                        child: Row(
-                          children: [
-                            Icon(
-                              widget.item['likedBy']?.contains(FirebaseAuth.instance.currentUser?.uid) == true
-                                  ? Icons.favorite
-                                  : Icons.favorite_border,
-                              size: 20,
-                              color: widget.item['likedBy']?.contains(FirebaseAuth.instance.currentUser?.uid) == true
-                                  ? Colors.red
-                                  : Colors.grey[600],
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              '${widget.item['likes'] ?? 0}',
-                              style: TextStyle(color: Colors.grey[600], fontSize: 14, fontWeight: FontWeight.w500),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    // 자신이 작성한 댓글에만 삭제 버튼 표시
-                    if (widget.item['uid'] == FirebaseAuth.instance.currentUser?.uid && widget.onDelete != null) ...[
-                      const SizedBox(width: 16),
+                      if (!widget.isReply) const SizedBox(width: 16),
                       GestureDetector(
-                        onTap: widget.onDelete,
+                        onTap: () {
+                          if (widget.topicId != null) {
+                            widget.onToggleLike(widget.item, widget.commentId, widget.topicId, widget.replyIndex);
+                          }
+                        },
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
                           child: Row(
                             children: [
-                              Icon(Icons.delete_outline, size: 18, color: Colors.grey[600]),
-                              const SizedBox(width: 4),
-                              Text('삭제', style: TextStyle(color: Colors.grey[600], fontSize: 14)),
+                              Icon(
+                                widget.item['likedBy']?.contains(FirebaseAuth.instance.currentUser?.uid) == true
+                                    ? Icons.favorite
+                                    : Icons.favorite_border,
+                                size: 20,
+                                color: widget.item['likedBy']?.contains(FirebaseAuth.instance.currentUser?.uid) == true
+                                    ? Colors.red
+                                    : Colors.grey[600],
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                '${widget.item['likes'] ?? 0}',
+                                style: TextStyle(color: Colors.grey[600], fontSize: 14, fontWeight: FontWeight.w500),
+                              ),
                             ],
                           ),
                         ),
                       ),
+                      // 자신이 작성한 댓글에만 삭제 버튼 표시
+                      if (widget.item['uid'] == FirebaseAuth.instance.currentUser?.uid && widget.onDelete != null) ...[
+                        const SizedBox(width: 16),
+                        GestureDetector(
+                          onTap: widget.onDelete,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
+                            child: Row(
+                              children: [
+                                Icon(Icons.delete_outline, size: 18, color: Colors.grey[600]),
+                                const SizedBox(width: 4),
+                                Text('삭제', style: TextStyle(color: Colors.grey[600], fontSize: 14)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
-                )
+                  ),
+                ]
               ],
             ),
           ),
