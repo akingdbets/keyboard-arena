@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart'; // ★ 로그인 정보 가져오기용
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:share_plus/share_plus.dart';
 import '../profile/profile_screen.dart';
 import '../report/report_service.dart';
@@ -435,7 +435,6 @@ class _VoteScreenState extends State<VoteScreen>
       }
 
       // 알림 기록 저장 (알림 설정과 무관하게 항상 저장)
-      // (요구사항: 알림 기록 페이지에서는 설정과 무관하게 모두 표시)
       final notificationRef = await _db
           .collection('users')
           .doc(targetUserId)
@@ -458,7 +457,6 @@ class _VoteScreenState extends State<VoteScreen>
       if (shouldSendPush && fcmToken != null && fcmToken.isNotEmpty) {
         try {
           // Cloud Functions 트리거를 위한 데이터 저장
-          // 실제 푸시 알림은 Cloud Functions에서 처리합니다
           final pushRef = await _db.collection('push_notifications').add({
             'targetUserId': targetUserId,
             'fcmToken': fcmToken,
@@ -478,12 +476,6 @@ class _VoteScreenState extends State<VoteScreen>
           );
         } catch (e) {
           print('❌ FCM 푸시 알림 요청 저장 실패: $e');
-        }
-      } else {
-        if (!shouldSendPush) {
-          print('⚠️ 알림 설정이 꺼져있어 푸시 알림을 전송하지 않습니다: type=$type');
-        } else if (fcmToken == null || fcmToken.isEmpty) {
-          print('⚠️ FCM 토큰이 없어 푸시 알림을 전송하지 않습니다: targetUserId=$targetUserId');
         }
       }
     } catch (e) {
@@ -529,12 +521,11 @@ class _VoteScreenState extends State<VoteScreen>
     }
 
     // 뱃지(선택한 투표 옵션) 설정
-    // 주제 데이터와 사용자 투표 정보를 직접 가져와서 뱃지 설정
     String badgeText = '관전';
     int badgeColorValue = Colors.grey.value;
 
     try {
-      // 주제 데이터 가져오기 (옵션 이름 확인용)
+      // 주제 데이터 가져오기
       final topicDoc = await _db.collection('topics').doc(widget.topicId).get();
       if (topicDoc.exists) {
         final topicData = topicDoc.data();
@@ -565,14 +556,7 @@ class _VoteScreenState extends State<VoteScreen>
           badgeText = options[optionIndex].split(' ')[0]; // 첫 번째 단어만 추출
           badgeColorValue =
               _optionColors[optionIndex % _optionColors.length].value;
-          print('✅ 뱃지 설정: optionIndex=$optionIndex, badgeText=$badgeText');
-        } else {
-          print(
-            '⚠️ 유효하지 않은 optionIndex: $optionIndex, options.length=${options.length}',
-          );
         }
-      } else {
-        print('⚠️ 주제 문서가 존재하지 않음: ${widget.topicId}');
       }
     } catch (e) {
       print("❌ 뱃지 설정 에러: $e");
@@ -661,7 +645,6 @@ class _VoteScreenState extends State<VoteScreen>
 
   // 답글 모드 시작
   void _startReply(String docId, String authorName) {
-    // 스크롤 위치 저장 (setState 전에) - 투표와 동일한 방식
     _saveScrollPosition();
     final savedPos = _savedScrollPosition;
 
@@ -669,49 +652,19 @@ class _VoteScreenState extends State<VoteScreen>
       _replyingToDocId = docId;
     });
 
-    // setState 직후 여러 번 복원 시도 - 투표와 동일한 방식
     _restoreScrollToPosition(savedPos);
 
-    // 키보드가 올라올 때 스크롤 위치 유지를 위한 추가 처리
-    // 포커스는 약간의 딜레이 후
     Future.delayed(const Duration(milliseconds: 50), () {
       if (mounted) {
-        // 스크롤 위치 다시 확인 및 복원
         if (_scrollController.hasClients && savedPos > 0) {
           _scrollController.jumpTo(savedPos);
         }
         FocusScope.of(context).requestFocus(_commentFocusNode);
       }
     });
-
-    // 키보드가 완전히 올라온 후에도 스크롤 위치 복원 (더 강력하게)
-    Future.delayed(const Duration(milliseconds: 150), () {
-      if (mounted && _scrollController.hasClients && savedPos > 0) {
-        _scrollController.jumpTo(savedPos);
-      }
-    });
-
-    Future.delayed(const Duration(milliseconds: 300), () {
-      if (mounted && _scrollController.hasClients && savedPos > 0) {
-        _scrollController.jumpTo(savedPos);
-      }
-    });
-
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted && _scrollController.hasClients && savedPos > 0) {
-        _scrollController.jumpTo(savedPos);
-      }
-    });
-
-    Future.delayed(const Duration(milliseconds: 700), () {
-      if (mounted && _scrollController.hasClients && savedPos > 0) {
-        _scrollController.jumpTo(savedPos);
-      }
-    });
   }
 
   void _cancelReply() {
-    // 스크롤 위치 저장 (setState 전에) - 투표와 동일한 방식
     _saveScrollPosition();
     final savedPos = _savedScrollPosition;
 
@@ -720,11 +673,10 @@ class _VoteScreenState extends State<VoteScreen>
     });
     FocusScope.of(context).unfocus();
 
-    // setState 직후 여러 번 복원 시도 - 투표와 동일한 방식
     _restoreScrollToPosition(savedPos);
   }
 
-  // 댓글 삭제 기능
+  // [수정] 댓글 완전히 삭제 기능 (Hard Delete)
   Future<void> _deleteComment(String commentId, String? topicId) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -741,15 +693,15 @@ class _VoteScreenState extends State<VoteScreen>
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('댓글 삭제'),
-        content: const Text('이 댓글을 정말 삭제하시겠습니까?'),
+        content: const Text('정말로 삭제하시겠습니까?\n이 댓글과 달린 답글이 모두 사라집니다.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: const Text('취소'),
           ),
-          ElevatedButton(
+          TextButton(
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('삭제'),
           ),
         ],
@@ -758,49 +710,17 @@ class _VoteScreenState extends State<VoteScreen>
 
     if (confirmed != true) return;
 
-    // 스크롤 위치 저장
     _saveScrollPosition();
     final savedPos = _savedScrollPosition;
 
     try {
-      // 먼저 댓글 문서를 읽어서 replies 배열 확인
-      final commentRef = _db
+      // 대댓글 유무 상관없이 문서 자체를 파괴 (Hard Delete)
+      await _db
           .collection('topics')
           .doc(topicId)
           .collection('comments')
-          .doc(commentId);
-      final commentDoc = await commentRef.get();
-
-      if (!commentDoc.exists) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('댓글을 찾을 수 없습니다.'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-        _restoreScrollToPosition(savedPos);
-        return;
-      }
-
-      final commentData = commentDoc.data();
-      final replies = commentData?['replies'] as List<dynamic>? ?? [];
-      final hasReplies = replies.isNotEmpty;
-
-      if (hasReplies) {
-        // 대댓글이 있는 경우: Soft Delete (문서 유지, 필드만 변경)
-        await commentRef.update({
-          'isDeleted': true,
-          'content': '삭제된 댓글입니다',
-          'author': '(알 수 없음)',
-        });
-        print('✅ Soft Delete: 대댓글이 있어서 문서는 유지하고 필드만 변경');
-      } else {
-        // 대댓글이 없는 경우: Hard Delete (문서 완전 삭제)
-        await commentRef.delete();
-        print('✅ Hard Delete: 대댓글이 없어서 문서를 완전히 삭제');
-      }
+          .doc(commentId)
+          .delete();
 
       if (mounted) {
         ScaffoldMessenger.of(
@@ -823,7 +743,7 @@ class _VoteScreenState extends State<VoteScreen>
     }
   }
 
-  // 대댓글 삭제 기능
+  // [수정] 답글 완전히 삭제 기능 (Hard Delete)
   Future<void> _deleteReply(
     String commentId,
     String? topicId,
@@ -844,15 +764,15 @@ class _VoteScreenState extends State<VoteScreen>
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('답글 삭제'),
-        content: const Text('이 답글을 정말 삭제하시겠습니까?'),
+        content: const Text('정말로 삭제하시겠습니까?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: const Text('취소'),
           ),
-          ElevatedButton(
+          TextButton(
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('삭제'),
           ),
         ],
@@ -861,34 +781,34 @@ class _VoteScreenState extends State<VoteScreen>
 
     if (confirmed != true) return;
 
-    // 스크롤 위치 저장
     _saveScrollPosition();
     final savedPos = _savedScrollPosition;
 
     try {
-      final commentRef = _db
+      final docRef = _db
           .collection('topics')
           .doc(topicId)
           .collection('comments')
           .doc(commentId);
-      final commentDoc = await commentRef.get();
-      if (!commentDoc.exists) return;
 
-      final replies = List<Map<String, dynamic>>.from(
-        commentDoc.data()?['replies'] ?? [],
-      );
-      if (replyIndex >= replies.length) return;
+      await _db.runTransaction((transaction) async {
+        final snapshot = await transaction.get(docRef);
+        if (!snapshot.exists) return;
 
-      // Soft Delete: 답글을 배열에서 제거하지 않고 isDeleted 플래그와 content를 업데이트
-      final reply = replies[replyIndex];
-      replies[replyIndex] = {
-        ...reply,
-        'isDeleted': true,
-        'content': '삭제된 답글입니다',
-        'author': '알 수 없음',
-      };
+        final data = snapshot.data();
+        if (data == null) return;
 
-      await commentRef.update({'replies': replies});
+        // 기존 답글 목록 가져오기
+        List<dynamic> replies = List.from(data['replies'] ?? []);
+
+        if (replyIndex >= 0 && replyIndex < replies.length) {
+          // ★ 여기가 핵심: isDeleted=true로 바꾸는 게 아니라, removeAt으로 뽑아버림 (완전 삭제)
+          replies.removeAt(replyIndex);
+
+          // 줄어든 리스트로 DB 업데이트
+          transaction.update(docRef, {'replies': replies});
+        }
+      });
 
       if (mounted) {
         ScaffoldMessenger.of(
@@ -898,13 +818,10 @@ class _VoteScreenState extends State<VoteScreen>
 
       _restoreScrollToPosition(savedPos);
     } catch (e) {
-      print("답글 삭제 에러: $e");
+      print("❌ 답글 삭제 에러: $e");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('답글 삭제에 실패했습니다: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('삭제 실패: $e'), backgroundColor: Colors.red),
         );
       }
       _restoreScrollToPosition(savedPos);

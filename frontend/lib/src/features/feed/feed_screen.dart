@@ -33,7 +33,16 @@ class _FeedScreenState extends State<FeedScreen> {
 
   // 카테고리 리스트
   final List<String> _categories = [
-    '전체', '음식', '게임', '연애', '스포츠', '유머', '정치', '직장인', '패션', '기타'
+    '전체',
+    '음식',
+    '게임',
+    '연애',
+    '스포츠',
+    '유머',
+    '정치',
+    '직장인',
+    '패션',
+    '기타',
   ];
 
   // 조회기간 리스트
@@ -117,12 +126,13 @@ class _FeedScreenState extends State<FeedScreen> {
         final data = doc.data() as Map<String, dynamic>?;
         final createdAt = data?['createdAt'] as Timestamp?;
         if (createdAt == null) return false;
-        
+
         final docDate = createdAt.toDate();
         final startDate = _customStartDate ?? periodStart;
         final endDate = _customEndDate ?? DateTime.now();
-        
-        return docDate.isAfter(startDate!) && docDate.isBefore(endDate.add(const Duration(days: 1)));
+
+        return docDate.isAfter(startDate!) &&
+            docDate.isBefore(endDate.add(const Duration(days: 1)));
       }).toList();
     }
 
@@ -160,7 +170,10 @@ class _FeedScreenState extends State<FeedScreen> {
     return Scaffold(
       drawer: const MainDrawer(),
       appBar: AppBar(
-        title: const Text('Key War', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text(
+          'Key War',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.notifications_none),
@@ -177,20 +190,27 @@ class _FeedScreenState extends State<FeedScreen> {
       ),
       floatingActionButton: Container(
         decoration: BoxDecoration(
-          gradient: const LinearGradient(colors: [Color(0xFFE91E63), Color(0xFF9C27B0)]),
+          gradient: const LinearGradient(
+            colors: [Color(0xFFE91E63), Color(0xFF9C27B0)],
+          ),
           borderRadius: BorderRadius.circular(30),
         ),
         child: FloatingActionButton.extended(
           onPressed: () {
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (context) => const CreateTopicScreen()),
+              MaterialPageRoute(
+                builder: (context) => const CreateTopicScreen(),
+              ),
             );
           },
           backgroundColor: Colors.transparent,
           elevation: 0,
           icon: const Icon(Icons.add_circle_outline, color: Colors.white),
-          label: const Text('새 주제', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          label: const Text(
+            '새 주제',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
         ),
       ),
       body: Column(
@@ -208,19 +228,23 @@ class _FeedScreenState extends State<FeedScreen> {
               },
             ),
           ),
-          
+
           // 조회기간 선택 바
           Container(
             height: 50,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(
               children: [
-                const Text('조회기간: ', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                const Text(
+                  '조회기간: ',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                ),
                 Expanded(
                   child: ListView.separated(
                     scrollDirection: Axis.horizontal,
                     itemCount: _periods.length,
-                    separatorBuilder: (context, index) => const SizedBox(width: 8),
+                    separatorBuilder: (context, index) =>
+                        const SizedBox(width: 8),
                     itemBuilder: (context, index) {
                       return _buildPeriodChip(context, _periods[index]);
                     },
@@ -229,7 +253,7 @@ class _FeedScreenState extends State<FeedScreen> {
               ],
             ),
           ),
-          
+
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
             child: Row(
@@ -242,7 +266,7 @@ class _FeedScreenState extends State<FeedScreen> {
               ],
             ),
           ),
-          
+
           const SizedBox(height: 10),
 
           // Firebase 실시간 데이터 구독
@@ -253,183 +277,243 @@ class _FeedScreenState extends State<FeedScreen> {
                 return StreamBuilder<QuerySnapshot>(
                   stream: _getTopicsQuery().snapshots(),
                   builder: (context, snapshot) {
-                // 로딩 중
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+                    // 로딩 중
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
 
-                // 에러 처리
-                if (snapshot.hasError) {
-                  final error = snapshot.error.toString();
-                  final isIndexError = error.contains('index') || error.contains('failed-precondition');
-                  
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24.0),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                          const SizedBox(height: 16),
-                          Text(
-                            isIndexError 
-                              ? 'Firestore 인덱스가 필요합니다'
-                              : '오류가 발생했습니다',
-                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    // 에러 처리
+                    if (snapshot.hasError) {
+                      final error = snapshot.error.toString();
+                      final isIndexError =
+                          error.contains('index') ||
+                          error.contains('failed-precondition');
+
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24.0),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(
+                                Icons.error_outline,
+                                size: 48,
+                                color: Colors.red,
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                isIndexError
+                                    ? 'Firestore 인덱스가 필요합니다'
+                                    : '오류가 발생했습니다',
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              if (isIndexError) ...[
+                                const Text(
+                                  '에러 메시지에 포함된 링크를 클릭하여\n인덱스를 생성해주세요.',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(fontSize: 14),
+                                ),
+                                const SizedBox(height: 16),
+                                ElevatedButton(
+                                  onPressed: () {
+                                    // 카테고리를 전체로 변경하여 인덱스 없이도 작동하도록
+                                    setState(() {
+                                      _selectedCategory = '전체';
+                                    });
+                                  },
+                                  child: const Text('전체 카테고리로 변경'),
+                                ),
+                              ] else ...[
+                                Text(
+                                  error,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
-                          const SizedBox(height: 8),
-                          if (isIndexError) ...[
-                            const Text(
-                              '에러 메시지에 포함된 링크를 클릭하여\n인덱스를 생성해주세요.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(fontSize: 14),
-                            ),
-                            const SizedBox(height: 16),
-                            ElevatedButton(
-                              onPressed: () {
-                                // 카테고리를 전체로 변경하여 인덱스 없이도 작동하도록
-                                setState(() {
-                                  _selectedCategory = '전체';
-                                });
-                              },
-                              child: const Text('전체 카테고리로 변경'),
-                            ),
-                          ] else ...[
-                            Text(
-                              error,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(fontSize: 12, color: Colors.grey),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  );
-                }
+                        ),
+                      );
+                    }
 
                     // 클라이언트 측에서 필터링 및 정렬 처리
-                    final allDocs = _filterAndSortDocuments(snapshot.data!.docs);
+                    final allDocs = _filterAndSortDocuments(
+                      snapshot.data!.docs,
+                    );
                     // 신고된 주제 필터링
-                    final reportedFilteredDocs = allDocs.where((doc) => !_reportedTopics.contains(doc.id)).toList();
+                    final reportedFilteredDocs = allDocs
+                        .where((doc) => !_reportedTopics.contains(doc.id))
+                        .toList();
                     // 차단한 사용자의 주제 필터링
                     final blockedUserIds = blockedUsersSnapshot.data ?? [];
                     final docs = reportedFilteredDocs.where((doc) {
                       final data = doc.data() as Map<String, dynamic>?;
                       final authorId = data?['authorId'] as String?;
-                      return authorId != null && !blockedUserIds.contains(authorId);
+                      return authorId != null &&
+                          !blockedUserIds.contains(authorId);
                     }).toList();
                     final topicCount = docs.length;
 
-                // 필터링 후 데이터 없음
-                if (topicCount == 0) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24.0),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.inbox_outlined, size: 64, color: Colors.grey[400]),
-                          const SizedBox(height: 16),
-                          Text(
-                            _selectedCategory == '전체' 
-                              ? '아직 주제가 없습니다'
-                              : '$_selectedCategory 카테고리에 주제가 없습니다',
-                            style: TextStyle(color: Colors.grey[600], fontSize: 16, fontWeight: FontWeight.bold),
+                    // 필터링 후 데이터 없음
+                    if (topicCount == 0) {
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24.0),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.inbox_outlined,
+                                size: 64,
+                                color: Colors.grey[400],
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                _selectedCategory == '전체'
+                                    ? '아직 주제가 없습니다'
+                                    : '$_selectedCategory 카테고리에 주제가 없습니다',
+                                style: TextStyle(
+                                  color: Colors.grey[600],
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                '새로운 주제를 만들어보세요!',
+                                style: TextStyle(
+                                  color: Colors.grey[500],
+                                  fontSize: 14,
+                                ),
+                              ),
+                              const SizedBox(height: 24),
+                              ElevatedButton.icon(
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          const CreateTopicScreen(),
+                                    ),
+                                  );
+                                },
+                                icon: const Icon(Icons.add_circle_outline),
+                                label: const Text('주제 만들기'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFE91E63),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 24,
+                                    vertical: 12,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 8),
-                          Text(
-                            '새로운 주제를 만들어보세요!',
-                            style: TextStyle(color: Colors.grey[500], fontSize: 14),
-                          ),
-                          const SizedBox(height: 24),
-                          ElevatedButton.icon(
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (context) => const CreateTopicScreen()),
-                              );
-                            },
-                            icon: const Icon(Icons.add_circle_outline),
-                            label: const Text('주제 만들기'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFE91E63),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        ),
+                      );
+                    }
+
+                    return Column(
+                      children: [
+                        // 주제 개수 표시
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              '총 $topicCount개의 주제',
+                              style: TextStyle(
+                                color: Colors.grey[600],
+                                fontSize: 12,
+                              ),
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                  );
-                }
-
-                return Column(
-                  children: [
-                    // 주제 개수 표시
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                      child: Align(
-                        alignment: Alignment.centerRight,
-                        child: Text(
-                          '총 $topicCount개의 주제',
-                          style: TextStyle(color: Colors.grey[600], fontSize: 12),
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    // 주제 리스트
-                    Expanded(
-                      child: ListView.separated(
-                        key: const PageStorageKey<String>('feed_scroll_position'), // 스크롤 위치 유지
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        itemCount: docs.length,
-                        separatorBuilder: (context, index) => const SizedBox(height: 20),
-                        itemBuilder: (context, index) {
-                          final doc = docs[index];
-                          final data = doc.data() as Map<String, dynamic>;
-                          
-                          return StreamBuilder<QuerySnapshot>(
-                            stream: _db.collection('topics').doc(doc.id).collection('comments').snapshots(),
-                            builder: (context, commentsSnapshot) {
-                              String hotComment = '가장 먼저 댓글을 달아보세요 !';
-                              
-                              if (commentsSnapshot.hasData && commentsSnapshot.data!.docs.isNotEmpty) {
-                                // 공감이 가장 많은 댓글 찾기
-                                QueryDocumentSnapshot? bestComment;
-                                int maxLikes = -1;
-                                
-                                for (var commentDoc in commentsSnapshot.data!.docs) {
-                                  final commentData = commentDoc.data() as Map<String, dynamic>;
-                                  final likes = commentData['likes'] as int? ?? 0;
-                                  
-                                  if (likes > maxLikes) {
-                                    maxLikes = likes;
-                                    bestComment = commentDoc;
+                        const SizedBox(height: 8),
+                        // 주제 리스트
+                        Expanded(
+                          child: ListView.separated(
+                            key: const PageStorageKey<String>(
+                              'feed_scroll_position',
+                            ), // 스크롤 위치 유지
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            itemCount: docs.length,
+                            separatorBuilder: (context, index) =>
+                                const SizedBox(height: 20),
+                            itemBuilder: (context, index) {
+                              final doc = docs[index];
+                              final data = doc.data() as Map<String, dynamic>;
+
+                              return StreamBuilder<QuerySnapshot>(
+                                stream: _db
+                                    .collection('topics')
+                                    .doc(doc.id)
+                                    .collection('comments')
+                                    .snapshots(),
+                                builder: (context, commentsSnapshot) {
+                                  String hotComment = '가장 먼저 댓글을 달아보세요 !';
+
+                                  if (commentsSnapshot.hasData &&
+                                      commentsSnapshot.data!.docs.isNotEmpty) {
+                                    // 공감이 가장 많은 댓글 찾기
+                                    QueryDocumentSnapshot? bestComment;
+                                    int maxLikes = -1;
+
+                                    for (var commentDoc
+                                        in commentsSnapshot.data!.docs) {
+                                      final commentData =
+                                          commentDoc.data()
+                                              as Map<String, dynamic>;
+                                      final likes =
+                                          commentData['likes'] as int? ?? 0;
+
+                                      if (likes > maxLikes) {
+                                        maxLikes = likes;
+                                        bestComment = commentDoc;
+                                      }
+                                    }
+
+                                    if (bestComment != null && maxLikes > 0) {
+                                      final bestData =
+                                          bestComment.data()
+                                              as Map<String, dynamic>;
+                                      hotComment =
+                                          bestData['content'] as String? ??
+                                          '가장 먼저 댓글을 달아보세요 !';
+                                    }
                                   }
-                                }
-                                
-                                if (bestComment != null && maxLikes > 0) {
-                                  final bestData = bestComment.data() as Map<String, dynamic>;
-                                  hotComment = bestData['content'] as String? ?? '가장 먼저 댓글을 달아보세요 !';
-                                }
-                              }
-                              
-                              return ArenaCard(
-                                topicId: doc.id, // 문서 ID 전달
-                                category: data['category'] ?? '기타',
-                                title: data['title'] ?? '제목 없음',
-                                initialVoteCounts: List<int>.from(data['voteCounts'] ?? []),
-                                options: List<String>.from(data['options'] ?? []),
-                                hotComment: hotComment,
-                                onReport: () => _reportTopic(doc.id),
+
+                                  return ArenaCard(
+                                    topicId: doc.id, // 문서 ID 전달
+                                    category: data['category'] ?? '기타',
+                                    title: data['title'] ?? '제목 없음',
+                                    initialVoteCounts: List<int>.from(
+                                      data['voteCounts'] ?? [],
+                                    ),
+                                    options: List<String>.from(
+                                      data['options'] ?? [],
+                                    ),
+                                    hotComment: hotComment,
+                                    onReport: () => _reportTopic(doc.id),
+                                  );
+                                },
                               );
                             },
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                );
+                          ),
+                        ),
+                      ],
+                    );
                   },
                 );
               },
@@ -455,10 +539,15 @@ class _FeedScreenState extends State<FeedScreen> {
       backgroundColor: isDark ? const Color(0xFF2D2D3A) : Colors.grey[200],
       selectedColor: const Color(0xFFE91E63),
       labelStyle: TextStyle(
-        color: isSelected ? Colors.white : (isDark ? Colors.grey : Colors.black87),
+        color: isSelected
+            ? Colors.white
+            : (isDark ? Colors.grey : Colors.black87),
         fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
       ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide.none),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide.none,
+      ),
       showCheckmark: false,
     );
   }
@@ -466,7 +555,7 @@ class _FeedScreenState extends State<FeedScreen> {
   Widget _buildSortButton(BuildContext context, String label) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isActive = _selectedSort == label;
-    
+
     return GestureDetector(
       onTap: () {
         setState(() {
@@ -476,7 +565,9 @@ class _FeedScreenState extends State<FeedScreen> {
       child: Text(
         label,
         style: TextStyle(
-          color: isActive ? const Color(0xFFE91E63) : (isDark ? Colors.grey : Colors.black54),
+          color: isActive
+              ? const Color(0xFFE91E63)
+              : (isDark ? Colors.grey : Colors.black54),
           fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
         ),
       ),
@@ -488,9 +579,9 @@ class _FeedScreenState extends State<FeedScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('로그인이 필요합니다.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('로그인이 필요합니다.')));
       }
       return;
     }
@@ -511,10 +602,10 @@ class _FeedScreenState extends State<FeedScreen> {
         setState(() {
           _reportedTopics.add(topicId);
         });
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('신고가 접수되었습니다.')),
-        );
+
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('신고가 접수되었습니다.')));
       }
     } catch (e) {
       print('❌ 주제 신고 에러: $e');
@@ -563,15 +654,17 @@ class _FeedScreenState extends State<FeedScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: isSelected 
-              ? const Color(0xFFE91E63) 
+          color: isSelected
+              ? const Color(0xFFE91E63)
               : (isDark ? const Color(0xFF2D2D3A) : Colors.grey[200]),
           borderRadius: BorderRadius.circular(16),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: isSelected ? Colors.white : (isDark ? Colors.grey : Colors.black87),
+            color: isSelected
+                ? Colors.white
+                : (isDark ? Colors.grey : Colors.black87),
             fontSize: 12,
             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
           ),
@@ -636,9 +729,9 @@ class _ArenaCardState extends State<ArenaCard> {
 
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('로그인이 필요합니다.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('로그인이 필요합니다.')));
       return;
     }
 
@@ -651,7 +744,7 @@ class _ArenaCardState extends State<ArenaCard> {
           .collection('votes')
           .doc(widget.topicId)
           .get();
-      
+
       if (userVoteDoc.exists) {
         final voteData = userVoteDoc.data();
         previousIndex = voteData?['optionIndex'] as int?;
@@ -669,7 +762,9 @@ class _ArenaCardState extends State<ArenaCard> {
 
     // 1. 로컬 상태 먼저 업데이트 (반응속도 향상)
     setState(() {
-      if (previousIndex != null && previousIndex >= 0 && previousIndex < _voteCounts.length) {
+      if (previousIndex != null &&
+          previousIndex >= 0 &&
+          previousIndex < _voteCounts.length) {
         _voteCounts[previousIndex]--;
       }
       if (index >= 0 && index < _voteCounts.length) {
@@ -679,7 +774,7 @@ class _ArenaCardState extends State<ArenaCard> {
 
     // 2. Firebase에 저장
     final docRef = _db.collection('topics').doc(widget.topicId);
-    
+
     try {
       await _db.runTransaction((transaction) async {
         final snapshot = await transaction.get(docRef);
@@ -694,37 +789,48 @@ class _ArenaCardState extends State<ArenaCard> {
 
         List<dynamic> counts = List.from(data['voteCounts'] ?? []);
         // totalVotes를 counts에서 직접 계산 (더 정확함)
-        int totalVotes = counts.fold<int>(0, (sum, count) => sum + (count as int? ?? 0));
-        
-        print("📊 피드 투표 시작: topicId=${widget.topicId}, optionIndex=$index, previousIndex=$previousIndex");
+        int totalVotes = counts.fold<int>(
+          0,
+          (sum, count) => sum + (count as int? ?? 0),
+        );
+
+        print(
+          "📊 피드 투표 시작: topicId=${widget.topicId}, optionIndex=$index, previousIndex=$previousIndex",
+        );
         print("📊 현재 투표 상태: counts=$counts, totalVotes=$totalVotes");
-        
+
         // 이전 선택 취소 (이미 투표한 경우에만)
-        if (previousIndex != null && previousIndex >= 0 && previousIndex < counts.length) {
+        if (previousIndex != null &&
+            previousIndex >= 0 &&
+            previousIndex < counts.length) {
           final prevCount = counts[previousIndex] as int? ?? 0;
           if (prevCount > 0) {
             counts[previousIndex] = prevCount - 1;
             totalVotes--;
-            print("📊 이전 투표 취소: previousIndex=$previousIndex, 이전 count=$prevCount");
+            print(
+              "📊 이전 투표 취소: previousIndex=$previousIndex, 이전 count=$prevCount",
+            );
           }
         }
-        
+
         // 새 선택 추가
         if (index >= 0 && index < counts.length) {
           final currentCount = counts[index] as int? ?? 0;
           counts[index] = currentCount + 1;
           totalVotes++;
-          print("📊 새 투표 추가: index=$index, 이전 count=$currentCount, 새로운 count=${counts[index]}, 새로운 totalVotes=$totalVotes");
+          print(
+            "📊 새 투표 추가: index=$index, 이전 count=$currentCount, 새로운 count=${counts[index]}, 새로운 totalVotes=$totalVotes",
+          );
         } else {
           throw Exception('유효하지 않은 선택지입니다.');
         }
-        
+
         transaction.update(docRef, {
           'voteCounts': counts,
           'totalVotes': totalVotes,
           'updatedAt': FieldValue.serverTimestamp(),
         });
-        
+
         print("✅ 피드 트랜잭션 업데이트 완료");
       });
 
@@ -734,7 +840,7 @@ class _ArenaCardState extends State<ArenaCard> {
           .doc(user.uid)
           .collection('votes')
           .doc(widget.topicId);
-      
+
       await userVoteRef.set({
         'topicId': widget.topicId,
         'optionIndex': index,
@@ -744,18 +850,20 @@ class _ArenaCardState extends State<ArenaCard> {
       print("✅ 피드에서 투표 저장 완료: ${widget.topicId}, 옵션: $index");
     } catch (e) {
       print("❌ 피드 투표 에러: $e");
-      
+
       // 에러 발생 시 이전 상태로 복원
       if (mounted) {
         setState(() {
-          if (previousIndex != null && previousIndex >= 0 && previousIndex < _voteCounts.length) {
+          if (previousIndex != null &&
+              previousIndex >= 0 &&
+              previousIndex < _voteCounts.length) {
             _voteCounts[previousIndex]++;
           }
           if (index >= 0 && index < _voteCounts.length) {
             _voteCounts[index]--;
           }
         });
-        
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('투표에 실패했습니다: ${e.toString()}'),
@@ -796,13 +904,18 @@ class _ArenaCardState extends State<ArenaCard> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     int totalVotes = _voteCounts.reduce((a, b) => a + b);
     final colors = widget.colors ?? _defaultColors;
-    
+
     // 실시간으로 사용자의 투표 정보 가져오기 (StreamBuilder 사용)
     final user = FirebaseAuth.instance.currentUser;
-    
+
     return StreamBuilder<DocumentSnapshot>(
-      stream: user != null 
-          ? _db.collection('users').doc(user.uid).collection('votes').doc(widget.topicId).snapshots()
+      stream: user != null
+          ? _db
+                .collection('users')
+                .doc(user.uid)
+                .collection('votes')
+                .doc(widget.topicId)
+                .snapshots()
           : null,
       builder: (context, voteSnapshot) {
         // 실시간으로 업데이트된 투표 정보 사용
@@ -810,194 +923,271 @@ class _ArenaCardState extends State<ArenaCard> {
         if (voteSnapshot.hasData && voteSnapshot.data!.exists) {
           final data = voteSnapshot.data!.data() as Map<String, dynamic>?;
           final optionIndex = data?['optionIndex'] as int?;
-          if (optionIndex != null && 
-              optionIndex >= 0 && 
+          if (optionIndex != null &&
+              optionIndex >= 0 &&
               optionIndex < widget.options.length) {
             currentSelectedIndex = optionIndex;
           }
         }
-        
+
         final bool hasVoted = currentSelectedIndex != null;
 
         return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF2D2D3A) : Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: isDark
-            ? []
-            : [BoxShadow(color: Colors.grey.withOpacity(0.15), blurRadius: 15, offset: const Offset(0, 5))],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF2D2D3A) : Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: isDark
+                ? []
+                : [
+                    BoxShadow(
+                      color: Colors.grey.withOpacity(0.15),
+                      blurRadius: 15,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: isDark ? Colors.white10 : Colors.grey[100], 
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: isDark ? Colors.white12 : Colors.grey[300]!),
-                ),
-                child: Text(widget.category, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: isDark ? Colors.white : Colors.black87)),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isDark ? Colors.white10 : Colors.grey[100],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isDark ? Colors.white12 : Colors.grey[300]!,
+                      ),
+                    ),
+                    child: Text(
+                      widget.category,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        color: isDark ? Colors.white : Colors.black87,
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  Icon(Icons.people_outline, size: 16, color: Colors.grey[500]),
+                  const SizedBox(width: 4),
+                  Text(
+                    '$totalVotes명',
+                    style: TextStyle(color: Colors.grey[500], fontSize: 13),
+                  ),
+                  if (widget.onReport != null) ...[
+                    const SizedBox(width: 8),
+                    PopupMenuButton<String>(
+                      icon: const Icon(
+                        Icons.more_vert,
+                        size: 18,
+                        color: Colors.grey,
+                      ),
+                      onSelected: (value) {
+                        if (value == 'report') {
+                          widget.onReport?.call();
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                          value: 'report',
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.flag_outlined,
+                                size: 20,
+                                color: Colors.red,
+                              ),
+                              SizedBox(width: 8),
+                              Text('이 주제 신고하기'),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
               ),
-              const Spacer(),
-              Icon(Icons.people_outline, size: 16, color: Colors.grey[500]),
-              const SizedBox(width: 4),
-              Text('$totalVotes명', style: TextStyle(color: Colors.grey[500], fontSize: 13)),
-              if (widget.onReport != null) ...[
-                const SizedBox(width: 8),
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert, size: 18, color: Colors.grey),
-                  onSelected: (value) {
-                    if (value == 'report') {
-                      widget.onReport?.call();
-                    }
-                  },
-                  itemBuilder: (context) => [
-                    const PopupMenuItem(
-                      value: 'report',
-                      child: Row(
+              const SizedBox(height: 16),
+              Text(
+                widget.title,
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  height: 1.3,
+                  color: isDark ? Colors.white : Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 20),
+              Column(
+                children: List.generate(widget.options.length, (index) {
+                  final isSelected = currentSelectedIndex == index;
+                  final color = colors[index % colors.length];
+                  final percentValue = _getPercentValue(index, totalVotes);
+
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8.0),
+                    child: GestureDetector(
+                      onTap: () => _castVote(index),
+                      child: Stack(
                         children: [
-                          Icon(Icons.flag_outlined, size: 20, color: Colors.red),
-                          SizedBox(width: 8),
-                          Text('이 주제 신고하기'),
+                          Container(
+                            height: 50,
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              color: isDark ? Colors.black26 : Colors.grey[100],
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: isSelected
+                                    ? color
+                                    : (hasVoted
+                                          ? Colors.transparent
+                                          : (isDark
+                                                ? Colors.white24
+                                                : Colors.grey[300]!)),
+                                width: isSelected ? 2 : 1,
+                              ),
+                            ),
+                          ),
+                          if (hasVoted)
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                return Container(
+                                  height: 50,
+                                  width: constraints.maxWidth * percentValue,
+                                  decoration: BoxDecoration(
+                                    color: color.withOpacity(0.25),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                );
+                              },
+                            ),
+                          Container(
+                            height: 50,
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            alignment: Alignment.centerLeft,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    widget.options[index],
+                                    style: TextStyle(
+                                      fontWeight: isSelected
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                      fontSize: 15,
+                                      color: isSelected
+                                          ? color
+                                          : (isDark
+                                                ? Colors.white70
+                                                : Colors.black87),
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (hasVoted)
+                                  Text(
+                                    _getPercentString(index, totalVotes),
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: isSelected
+                                          ? color
+                                          : (isDark
+                                                ? Colors.grey
+                                                : Colors.grey[600]),
+                                    ),
+                                  ),
+                                if (isSelected)
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 8.0),
+                                    child: Icon(
+                                      Icons.check_circle,
+                                      color: color,
+                                      size: 18,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ),
-                  ],
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 16),
-          Text(widget.title, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, height: 1.3, color: isDark ? Colors.white : Colors.black87)),
-          const SizedBox(height: 20),
-          Column(
-            children: List.generate(widget.options.length, (index) {
-              final isSelected = currentSelectedIndex == index;
-              final color = colors[index % colors.length];
-              final percentValue = _getPercentValue(index, totalVotes);
-              
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8.0),
-                child: GestureDetector(
-                  onTap: () => _castVote(index),
-                  child: Stack(
+                  );
+                }),
+              ),
+              const SizedBox(height: 16),
+              GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => VoteScreen(
+                        topicId: widget.topicId,
+                        highlightComment: widget.hotComment,
+                      ),
+                    ),
+                  );
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.black26 : Colors.grey[50],
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
                     children: [
-                      Container(
-                        height: 50,
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: isDark ? Colors.black26 : Colors.grey[100],
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: isSelected ? color : (hasVoted ? Colors.transparent : (isDark ? Colors.white24 : Colors.grey[300]!)),
-                            width: isSelected ? 2 : 1,
-                          ),
+                      const Text(
+                        '🔥 베댓: ',
+                        style: TextStyle(
+                          color: Colors.orange,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
-                      if (hasVoted)
-                        LayoutBuilder(
-                          builder: (context, constraints) {
-                            return Container(
-                              height: 50,
-                              width: constraints.maxWidth * percentValue, 
-                              decoration: BoxDecoration(
-                                color: color.withOpacity(0.25), 
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            );
-                          },
-                        ),
-                      Container(
-                        height: 50,
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        alignment: Alignment.centerLeft,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                widget.options[index],
-                                style: TextStyle(
-                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                                  fontSize: 15,
-                                  color: isSelected ? color : (isDark ? Colors.white70 : Colors.black87),
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            if (hasVoted)
-                              Text(
-                                _getPercentString(index, totalVotes),
-                                style: TextStyle(fontWeight: FontWeight.bold, color: isSelected ? color : (isDark ? Colors.grey : Colors.grey[600])),
-                              ),
-                            if (isSelected) 
-                              Padding(
-                                padding: const EdgeInsets.only(left: 8.0),
-                                child: Icon(Icons.check_circle, color: color, size: 18),
-                              ),
-                          ],
+                      Expanded(
+                        child: Text(
+                          widget.hotComment,
+                          style: TextStyle(
+                            color: isDark ? Colors.white70 : Colors.black87,
+                            fontSize: 13,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
                   ),
                 ),
-              );
-            }),
-          ),
-          const SizedBox(height: 16),
-          GestureDetector(
-            onTap: () {
-              Navigator.push(
-                context, 
-                MaterialPageRoute(
-                  builder: (context) => VoteScreen(
-                    topicId: widget.topicId,
-                    highlightComment: widget.hotComment,
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) =>
+                            VoteScreen(topicId: widget.topicId),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.comment_outlined, size: 18),
+                  label: const Text('토론장 입장해서 댓글 보기'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.grey[500],
                   ),
                 ),
-              );
-            },
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: isDark ? Colors.black26 : Colors.grey[50],
-                borderRadius: BorderRadius.circular(10),
               ),
-              child: Row(
-                children: [
-                  const Text('🔥 베댓: ', style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
-                  Expanded(
-                    child: Text(widget.hotComment, style: TextStyle(color: isDark ? Colors.white70 : Colors.black87, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
-                  ),
-                ],
-              ),
-            ),
+            ],
           ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: TextButton.icon(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => VoteScreen(topicId: widget.topicId),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.comment_outlined, size: 18),
-              label: const Text('토론장 입장해서 댓글 보기'),
-              style: TextButton.styleFrom(foregroundColor: Colors.grey[500]),
-            ),
-          ),
-        ],
-      ),
-    );
+        );
       },
     );
   }
