@@ -626,16 +626,38 @@ class _ProfileScreenState extends State<ProfileScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 16),
           decoration: BoxDecoration(
-            gradient: isSelected ? const LinearGradient(colors: [Color(0xFFE91E63), Color(0xFF9C27B0)]) : null,
-            color: isSelected ? null : Colors.transparent,
-            border: isSelected ? null : Border.all(color: isDark ? Colors.white24 : Colors.grey[400]!),
+            color: isSelected
+                ? const Color(0xFFFF512F).withOpacity(0.1)
+                : Colors.transparent,
+            border: Border.all(
+              color: isSelected
+                  ? const Color(0xFFFF512F)
+                  : (isDark ? Colors.white24 : Colors.grey[400]!),
+              width: isSelected ? 1.5 : 1,
+            ),
             borderRadius: BorderRadius.circular(16),
           ),
           child: Column(
             children: [
-              Text(label, style: TextStyle(color: isSelected ? Colors.white : (isDark ? Colors.white : Colors.black87), fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+              Text(
+                label,
+                style: TextStyle(
+                  color: isSelected
+                      ? const Color(0xFFFF512F)
+                      : (isDark ? Colors.white : Colors.black87),
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
               const SizedBox(height: 4),
-              Text(count, style: TextStyle(color: isSelected ? Colors.white70 : (isDark ? Colors.white70 : Colors.black54), fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+              Text(
+                count,
+                style: TextStyle(
+                  color: isSelected
+                      ? const Color(0xFFFF512F).withOpacity(0.8)
+                      : (isDark ? Colors.white70 : Colors.black54),
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
             ],
           ),
         ),

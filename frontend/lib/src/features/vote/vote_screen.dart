@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -6,6 +7,16 @@ import '../profile/profile_screen.dart';
 import '../report/report_service.dart';
 import '../report/report_dialog.dart';
 import '../block/block_service.dart';
+import '../../utils/notification_state.dart';
+
+// 원댓글이 삭제되었을 때 발생하는 예외
+class ParentCommentDeletedException implements Exception {
+  final String message;
+  ParentCommentDeletedException(this.message);
+  
+  @override
+  String toString() => message;
+}
 
 class VoteScreen extends StatefulWidget {
   final String topicId; // 주제 ID (필수)
@@ -24,7 +35,10 @@ class _VoteScreenState extends State<VoteScreen>
   final ReportService _reportService = ReportService();
   final BlockService _blockService = BlockService();
 
-  int? _selectedOptionIndex;
+  int? _selectedOptionIndex; // 낙관적 업데이트용 (즉시 UI 반영)
+  int? _confirmedOptionIndex; // 서버에 확실히 저장된 투표 상태
+  Map<int, int> _optimisticTargets = {}; // 목표값 고정: Key=옵션 인덱스, Value=기대하는 최종 투표수
+  List<int> _currentServerCounts = []; // 현재 서버에서 받은 투표수 (목표값 계산용)
   String _commentSort = '최신순'; // 댓글 정렬: 최신순, 인기순
 
   // 대댓글 관련 상태
@@ -57,12 +71,18 @@ class _VoteScreenState extends State<VoteScreen>
   final Set<String> _reportedComments = {}; // 신고된 댓글 ID
   bool _isTopicReported = false; // 주제 신고 여부
 
+  // 투표 디바운싱용 타이머
+  Timer? _voteDebounceTimer;
+
   @override
   bool get wantKeepAlive => true; // 상태 유지
 
   @override
   void initState() {
     super.initState();
+
+    // 현재 보고 있는 투표방 ID 설정 (알림 필터링용)
+    NotificationState.setCurrentViewingVoteId(widget.topicId);
 
     // Stream 초기화 (리빌드 시에도 유지되도록)
     _topicStream = _db.collection('topics').doc(widget.topicId).snapshots();
@@ -168,6 +188,13 @@ class _VoteScreenState extends State<VoteScreen>
 
   @override
   void dispose() {
+    // 현재 보고 있는 투표방 ID 초기화 (화면을 나갔음을 표시)
+    NotificationState.setCurrentViewingVoteId(null);
+    
+    // 디바운싱 타이머 정리
+    _voteDebounceTimer?.cancel();
+    _voteDebounceTimer = null;
+    
     _scrollController.removeListener(_onScroll);
     _commentFocusNode.removeListener(_onFocusChange);
     _commentController.dispose();
@@ -228,6 +255,7 @@ class _VoteScreenState extends State<VoteScreen>
         if (optionIndex != null && mounted) {
           setState(() {
             _selectedOptionIndex = optionIndex;
+            _confirmedOptionIndex = optionIndex; // 서버 상태와 동기화
           });
         }
       }
@@ -236,17 +264,61 @@ class _VoteScreenState extends State<VoteScreen>
     }
   }
 
-  // [기능 1] 투표하기
-  Future<void> _castVote(int index) async {
+  // [기능 1] 투표하기 (디바운싱 + 목표값 고정 낙관적 업데이트 적용)
+  void _castVote(int index) {
     if (_selectedOptionIndex == index) return;
 
-    // 스크롤 위치 저장 (setState 전에)
-    _saveScrollPosition();
+    // 기존 타이머가 있으면 취소하고 목표값 초기화
+    if (_voteDebounceTimer != null) {
+      _voteDebounceTimer?.cancel();
+      _optimisticTargets.clear(); // 이전 목표값 제거
+    }
 
+    // ★ 목표값 계산: 현재 화면의 투표수를 기준으로 목표값 설정
+    final previousIndex = _selectedOptionIndex;
+    final Map<int, int> newTargets = {};
+    
+    // 취소할 옵션이 있다면 목표값 설정 (현재값 - 1)
+    if (previousIndex != null &&
+        previousIndex >= 0 &&
+        previousIndex < _currentServerCounts.length) {
+      final currentCount = _currentServerCounts[previousIndex];
+      newTargets[previousIndex] = (currentCount - 1).clamp(0, double.infinity).toInt();
+    }
+    
+    // 선택한 옵션의 목표값 설정 (현재값 + 1)
+    if (index >= 0 && index < _currentServerCounts.length) {
+      final currentCount = _currentServerCounts[index];
+      newTargets[index] = currentCount + 1;
+    }
+
+    // ★ 낙관적 업데이트: 즉시 UI 반영 (서버 응답 기다리지 않음)
+    setState(() {
+      _selectedOptionIndex = index;
+      _optimisticTargets = newTargets; // 목표값 저장
+    });
+
+    // 스크롤 위치 저장
+    _saveScrollPosition();
+    final savedPos = _savedScrollPosition;
+    _restoreScrollToPosition(savedPos);
+
+    // 새로운 타이머 시작 (500ms 후 백그라운드에서 서버 업데이트)
+    _voteDebounceTimer = Timer(const Duration(milliseconds: 500), () {
+      _performVote(index, previousIndex);
+    });
+  }
+
+  // 실제 투표 로직 (백그라운드에서 실행, 에러 시 롤백)
+  Future<void> _performVote(int index, int? previousIndex) async {
     // 로그인 확인
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
+      // 로그인 안 되어 있으면 롤백
       if (mounted) {
+        setState(() {
+          _selectedOptionIndex = previousIndex;
+        });
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('로그인이 필요합니다.')));
@@ -254,10 +326,8 @@ class _VoteScreenState extends State<VoteScreen>
       return;
     }
 
-    // 사용자의 이전 투표 정보 확인 (Firestore에서 가져오기)
-    int? previousIndex = _selectedOptionIndex;
-
-    // Firestore에서 실제 이전 투표 확인
+    // Firestore에서 실제 이전 투표 확인 (서버 상태와 동기화)
+    int? serverPreviousIndex = previousIndex;
     try {
       final userVoteDoc = await _db
           .collection('users')
@@ -268,30 +338,19 @@ class _VoteScreenState extends State<VoteScreen>
 
       if (userVoteDoc.exists) {
         final voteData = userVoteDoc.data();
-        previousIndex = voteData?['optionIndex'] as int?;
+        serverPreviousIndex = voteData?['optionIndex'] as int?;
       }
     } catch (e) {
       print("이전 투표 정보 확인 에러: $e");
+      // 에러가 나도 계속 진행 (서버 상태 확인 실패는 치명적이지 않음)
     }
 
-    // 1. 내 앱에서 먼저 숫자를 바꿈 (반응속도 빠르게)
-    // 스크롤 위치 저장 (setState 전에)
-    _saveScrollPosition();
-    final savedPos = _savedScrollPosition;
-
-    setState(() {
-      _selectedOptionIndex = index;
-    });
-
-    // setState 직후 여러 번 복원 시도
-    _restoreScrollToPosition(savedPos);
-
-    // 2. 서버에 저장 (트랜잭션)
+    // 서버에 저장 (트랜잭션)
     final docRef = _db.collection('topics').doc(widget.topicId);
 
     try {
       print(
-        "📊 투표 시작: topicId=${widget.topicId}, optionIndex=$index, previousIndex=$previousIndex",
+        "📊 투표 시작: topicId=${widget.topicId}, optionIndex=$index, previousIndex=$serverPreviousIndex",
       );
 
       await _db.runTransaction((transaction) async {
@@ -315,19 +374,19 @@ class _VoteScreenState extends State<VoteScreen>
         );
 
         print(
-          "📊 현재 투표 상태: counts=$counts, totalVotes=$totalVotes, counts.length=${counts.length}, previousIndex=$previousIndex",
+          "📊 현재 투표 상태: counts=$counts, totalVotes=$totalVotes, counts.length=${counts.length}, previousIndex=$serverPreviousIndex",
         );
 
         // 이전 선택 취소 (이미 투표한 경우에만)
-        if (previousIndex != null &&
-            previousIndex >= 0 &&
-            previousIndex < counts.length) {
-          final prevCount = counts[previousIndex] as int? ?? 0;
+        if (serverPreviousIndex != null &&
+            serverPreviousIndex >= 0 &&
+            serverPreviousIndex < counts.length) {
+          final prevCount = counts[serverPreviousIndex] as int? ?? 0;
           if (prevCount > 0) {
-            counts[previousIndex] = prevCount - 1;
+            counts[serverPreviousIndex] = prevCount - 1;
             totalVotes--;
             print(
-              "📊 이전 투표 취소: previousIndex=$previousIndex, 이전 count=$prevCount",
+              "📊 이전 투표 취소: previousIndex=$serverPreviousIndex, 이전 count=$prevCount",
             );
           }
         }
@@ -354,7 +413,7 @@ class _VoteScreenState extends State<VoteScreen>
         print("✅ 트랜잭션 업데이트 완료");
       });
 
-      // 3. 사용자별 투표 정보 저장
+      // 사용자별 투표 정보 저장
       final userVoteRef = _db
           .collection('users')
           .doc(user.uid)
@@ -371,27 +430,32 @@ class _VoteScreenState extends State<VoteScreen>
         "✅ 투표 저장 완료: users/${user.uid}/votes/${widget.topicId}, 옵션: $index",
       );
 
-      // 스크롤 위치 즉시 복원 (필요시)
-      _restoreScrollPosition();
+      // ★ 서버 저장 성공 시 확정 상태 업데이트 및 목표값 초기화
+      if (mounted) {
+        setState(() {
+          _confirmedOptionIndex = index;
+          _optimisticTargets.clear(); // 트랜잭션 완료 시 목표값 제거
+        });
+      }
     } catch (e) {
       print("❌ 투표 에러: $e");
 
-      // 에러 발생 시 이전 상태로 복원
+      // ★ 에러 발생 시 롤백: 이전 상태로 복원 및 목표값 초기화
       if (mounted) {
         setState(() {
           _selectedOptionIndex = previousIndex;
+          _optimisticTargets.clear(); // 트랜잭션 실패 시 목표값 제거
+          // _confirmedOptionIndex는 변경하지 않음 (서버 상태 유지)
         });
 
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('투표에 실패했습니다: ${e.toString()}'),
+          const SnackBar(
+            content: Text('투표에 실패했습니다. 다시 시도해주세요.'),
             backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
           ),
         );
       }
-
-      // 에러 발생 시에도 스크롤 위치 즉시 복원
-      _restoreScrollPosition();
     }
   }
 
@@ -580,21 +644,29 @@ class _VoteScreenState extends State<VoteScreen>
     _saveScrollPosition();
     final savedPos = _savedScrollPosition;
 
-    String? commentDocId;
-    if (_replyingToDocId != null) {
-      // 대댓글: 해당 댓글 문서의 'replies' 배열에 추가
-      final commentRef = _db
-          .collection('topics')
-          .doc(widget.topicId)
-          .collection('comments')
-          .doc(_replyingToDocId);
-      await commentRef.update({
-        'replies': FieldValue.arrayUnion([newComment]),
-      });
+    try {
+      String? commentDocId;
+      if (_replyingToDocId != null) {
+        // 대댓글: 원댓글 존재 여부 확인 후 추가
+        final commentRef = _db
+            .collection('topics')
+            .doc(widget.topicId)
+            .collection('comments')
+            .doc(_replyingToDocId);
+        
+        // ★ 원댓글 존재 여부 확인 (방어 코드)
+        final parentCommentDoc = await commentRef.get();
+        if (!parentCommentDoc.exists) {
+          // 원댓글이 삭제되었으면 예외 발생
+          throw ParentCommentDeletedException('원댓글이 삭제되었습니다.');
+        }
+        
+        // 원댓글이 존재하면 대댓글 추가
+        await commentRef.update({
+          'replies': FieldValue.arrayUnion([newComment]),
+        });
 
-      // 답글 알림 생성
-      final parentCommentDoc = await commentRef.get();
-      if (parentCommentDoc.exists) {
+        // 답글 알림 생성
         final parentData = parentCommentDoc.data();
         final parentAuthorId = parentData?['uid'] as String?;
         if (parentAuthorId != null) {
@@ -606,41 +678,76 @@ class _VoteScreenState extends State<VoteScreen>
             commentId: _replyingToDocId,
           );
         }
+
+        setState(() => _replyingToDocId = null);
+      } else {
+        // 일반 댓글: comments 컬렉션에 새 문서 추가
+        final docRef = await _db
+            .collection('topics')
+            .doc(widget.topicId)
+            .collection('comments')
+            .add(newComment);
+        commentDocId = docRef.id;
+
+        // 주제 작성자에게 댓글 알림 생성
+        final topicDoc = await _db.collection('topics').doc(widget.topicId).get();
+        if (topicDoc.exists) {
+          final topicData = topicDoc.data();
+          final topicAuthorId = topicData?['authorId'] as String?;
+          if (topicAuthorId != null) {
+            final topicTitle = topicData?['title'] as String? ?? '주제';
+            await _createNotification(
+              targetUserId: topicAuthorId,
+              type: 'topic_comment',
+              message: '$myNickname님이 "$topicTitle" 주제에 댓글을 남겼습니다.',
+              topicId: widget.topicId,
+              commentId: commentDocId,
+            );
+          }
+        }
       }
 
-      setState(() => _replyingToDocId = null);
-    } else {
-      // 일반 댓글: comments 컬렉션에 새 문서 추가
-      final docRef = await _db
-          .collection('topics')
-          .doc(widget.topicId)
-          .collection('comments')
-          .add(newComment);
-      commentDocId = docRef.id;
+      _commentController.clear();
+      FocusScope.of(context).unfocus();
 
-      // 주제 작성자에게 댓글 알림 생성
-      final topicDoc = await _db.collection('topics').doc(widget.topicId).get();
-      if (topicDoc.exists) {
-        final topicData = topicDoc.data();
-        final topicAuthorId = topicData?['authorId'] as String?;
-        if (topicAuthorId != null) {
-          final topicTitle = topicData?['title'] as String? ?? '주제';
-          await _createNotification(
-            targetUserId: topicAuthorId,
-            type: 'topic_comment',
-            message: '$myNickname님이 "$topicTitle" 주제에 댓글을 남겼습니다.',
-            topicId: widget.topicId,
-            commentId: commentDocId,
+      // 스크롤 위치 즉시 복원 (여러 번 시도)
+      _restoreScrollToPosition(savedPos);
+    } catch (e) {
+      // 원댓글 삭제 예외 처리
+      if (e is ParentCommentDeletedException) {
+        if (mounted) {
+          // 답글 모드 취소 및 입력창 초기화
+          setState(() {
+            _replyingToDocId = null;
+          });
+          _commentController.clear();
+          FocusScope.of(context).unfocus();
+          
+          // 사용자에게 안내 메시지 표시
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('삭제된 댓글에는 답글을 달 수 없습니다.'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      } else {
+        // 기타 에러 처리
+        print("❌ 댓글 작성 에러: $e");
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('댓글 작성에 실패했습니다: ${e.toString()}'),
+              backgroundColor: Colors.red,
+            ),
           );
         }
       }
+      
+      // 스크롤 위치 복원
+      _restoreScrollToPosition(savedPos);
     }
-
-    _commentController.clear();
-    FocusScope.of(context).unfocus();
-
-    // 스크롤 위치 즉시 복원 (여러 번 시도)
-    _restoreScrollToPosition(savedPos);
   }
 
   // 답글 모드 시작
@@ -1336,13 +1443,40 @@ class _VoteScreenState extends State<VoteScreen>
                               ?.map((e) => e as String?)
                               .toList() ??
                           List.filled(options.length, null);
-                      final List<dynamic> counts = List.from(
+                      final List<dynamic> serverCounts = List.from(
                         data['voteCounts'] ?? [],
                       );
-                      // totalVotes를 counts에서 직접 계산 (더 정확함)
-                      final int totalVotes = counts.fold<int>(
+                      
+                      // ★ 현재 서버 투표수 저장 (목표값 계산용)
+                      _currentServerCounts = serverCounts
+                          .map((e) => e as int? ?? 0)
+                          .toList();
+                      
+                      // ★ 목표값 고정 방식: 서버 데이터와 목표값을 비교하여 displayCounts 계산
+                      List<int> displayCounts = List.from(_currentServerCounts);
+                      
+                      // 각 옵션에 대해 목표값이 있으면 적용
+                      for (int i = 0; i < displayCounts.length; i++) {
+                        if (_optimisticTargets.containsKey(i)) {
+                          final int target = _optimisticTargets[i]!;
+                          final int serverCount = displayCounts[i];
+                          
+                          // 증가시키는 경우 (투표): 서버값이 아직 안 올랐으면 목표값 보여줌
+                          if (target > serverCount) {
+                            displayCounts[i] = target;
+                          }
+                          // 감소시키는 경우 (취소): 서버값이 아직 안 줄었으면 목표값 보여줌
+                          else if (target < serverCount) {
+                            displayCounts[i] = target;
+                          }
+                          // 목표값과 서버값이 같으면 서버값 사용 (동기화 완료)
+                        }
+                      }
+                      
+                      // displayTotalVotes 계산
+                      final int displayTotalVotes = displayCounts.fold<int>(
                         0,
-                        (a, b) => a + (b as int? ?? 0),
+                        (sum, count) => sum + count,
                       );
 
                       // 옵션 데이터는 StreamBuilder에서 직접 사용하므로 상태 업데이트 불필요
@@ -1377,12 +1511,13 @@ class _VoteScreenState extends State<VoteScreen>
                             // 옵션 리스트
                             Column(
                               children: List.generate(options.length, (index) {
-                                final count = index < counts.length
-                                    ? (counts[index] as int)
+                                // ★ 낙관적 업데이트된 숫자 사용
+                                final count = index < displayCounts.length
+                                    ? displayCounts[index]
                                     : 0;
-                                final percent = totalVotes == 0
+                                final percent = displayTotalVotes == 0
                                     ? "0%"
-                                    : "${((count / totalVotes) * 100).toStringAsFixed(1)}%";
+                                    : "${((count / displayTotalVotes) * 100).toStringAsFixed(1)}%";
                                 final color =
                                     _optionColors[index % _optionColors.length];
                                 final imageUrl = index < optionImages.length
@@ -1409,7 +1544,7 @@ class _VoteScreenState extends State<VoteScreen>
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Text(
-                                  '총 $totalVotes표 참여',
+                                  '총 $displayTotalVotes표 참여',
                                   style: TextStyle(color: Colors.grey[600]),
                                 ),
                               ],

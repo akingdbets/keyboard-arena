@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'main_drawer.dart';
@@ -16,7 +17,7 @@ class FeedScreen extends StatefulWidget {
   State<FeedScreen> createState() => _FeedScreenState();
 }
 
-class _FeedScreenState extends State<FeedScreen> {
+class _FeedScreenState extends State<FeedScreen> with AutomaticKeepAliveClientMixin {
   String _selectedCategory = '전체';
   String _selectedSort = '최신순';
   String _selectedPeriod = '전체'; // 조회기간: 전체, 1일, 1주, 1달, 직접설정
@@ -30,6 +31,15 @@ class _FeedScreenState extends State<FeedScreen> {
   final Set<String> _reportedTopics = {};
   final ReportService _reportService = ReportService();
   final BlockService _blockService = BlockService();
+
+  // 스크롤 컨트롤러 및 상태
+  late final ScrollController _scrollController;
+  
+  // Stream 캐싱을 위한 변수 (build 메서드에서 재생성 방지)
+  Stream<QuerySnapshot>? _topicsStream;
+
+  // 뒤로가기 버튼 두 번 눌러야 종료
+  DateTime? _lastPressedAt;
 
   // 카테고리 리스트
   final List<String> _categories = [
@@ -49,9 +59,20 @@ class _FeedScreenState extends State<FeedScreen> {
   final List<String> _periods = ['전체', '1일', '1주', '1달', '직접설정'];
 
   @override
+  bool get wantKeepAlive => true;
+
+  @override
   void initState() {
     super.initState();
+    // ScrollController 초기화는 initState에서만 수행
+    _scrollController = ScrollController();
     _loadReportedTopics();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   // 신고한 주제 목록 불러오기 (앱 재시작 시에도 유지)
@@ -86,6 +107,12 @@ class _FeedScreenState extends State<FeedScreen> {
     // 모든 데이터를 가져온 후 클라이언트에서 필터링/정렬
     // 인덱스가 필요 없도록 가장 단순한 쿼리만 사용 (orderBy도 제거)
     return _db.collection('topics');
+  }
+
+  // Stream을 캐싱하여 build 메서드에서 재생성 방지
+  Stream<QuerySnapshot> _getTopicsStream() {
+    _topicsStream ??= _getTopicsQuery().snapshots();
+    return _topicsStream!;
   }
 
   // 조회기간에 따른 시작 날짜 계산
@@ -167,33 +194,64 @@ class _FeedScreenState extends State<FeedScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      drawer: const MainDrawer(),
-      appBar: AppBar(
-        title: const Text(
-          'Key War',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.notifications_none),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const NotificationHistoryScreen(),
+    super.build(context); // AutomaticKeepAliveClientMixin을 위해 필요
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (bool didPop) async {
+        if (didPop) return;
+
+        final now = DateTime.now();
+        if (_lastPressedAt == null || 
+            now.difference(_lastPressedAt!) > const Duration(seconds: 2)) {
+          // 첫 번째 누름이거나 2초 이상 지났으면
+          setState(() {
+            _lastPressedAt = now;
+          });
+          
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text(
+                  '뒤로 버튼을 한번 더 누르면 종료됩니다.',
+                  style: TextStyle(color: Colors.white),
                 ),
-              );
-            },
-          ),
-        ],
-      ),
+                backgroundColor: isDark 
+                    ? const Color(0xFF2D2D3A) 
+                    : Colors.grey[800],
+                duration: const Duration(seconds: 2),
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                margin: const EdgeInsets.all(16),
+              ),
+            );
+          }
+        } else {
+          // 2초 이내에 다시 누르면 앱 종료
+          SystemNavigator.pop();
+        }
+      },
+      child: Scaffold(
+      drawer: const MainDrawer(),
       floatingActionButton: Container(
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFFE91E63), Color(0xFF9C27B0)],
-          ),
+          color: isDark ? const Color(0xFF2D2D3A) : Colors.white,
           borderRadius: BorderRadius.circular(30),
+          border: Border.all(
+            color: const Color(0xFFFF512F),
+            width: 1.5,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFFF512F).withOpacity(0.3),
+              blurRadius: 8,
+              spreadRadius: 0,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
         child: FloatingActionButton.extended(
           onPressed: () {
@@ -206,195 +264,248 @@ class _FeedScreenState extends State<FeedScreen> {
           },
           backgroundColor: Colors.transparent,
           elevation: 0,
-          icon: const Icon(Icons.add_circle_outline, color: Colors.white),
+          icon: const Icon(Icons.add_circle_outline, color: Color(0xFFFF512F)),
           label: const Text(
             '새 주제',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            style: TextStyle(color: Color(0xFFFF512F), fontWeight: FontWeight.bold),
           ),
         ),
       ),
-      body: Column(
-        children: [
-          // 1. 가로 스크롤 카테고리 바
-          SizedBox(
-            height: 60,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              itemCount: _categories.length,
-              separatorBuilder: (context, index) => const SizedBox(width: 8),
-              itemBuilder: (context, index) {
-                return _buildCategoryChip(context, _categories[index]);
-              },
+      body: CustomScrollView(
+        key: const PageStorageKey<String>('feed_scroll_position'),
+        controller: _scrollController,
+        slivers: [
+          // SliverAppBar
+          SliverAppBar(
+            floating: true,
+            snap: true,
+            pinned: false,
+            title: const Text(
+              'Key War',
+              style: TextStyle(fontWeight: FontWeight.bold),
             ),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.notifications_none),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const NotificationHistoryScreen(),
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
 
-          // 조회기간 선택 바
-          Container(
-            height: 50,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
+          // 필터 영역 (카테고리, 조회기간, 정렬)
+          SliverToBoxAdapter(
+            child: Column(
               children: [
-                const Text(
-                  '조회기간: ',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                ),
-                Expanded(
+                // 1. 가로 스크롤 카테고리 바
+                SizedBox(
+                  height: 60,
                   child: ListView.separated(
                     scrollDirection: Axis.horizontal,
-                    itemCount: _periods.length,
-                    separatorBuilder: (context, index) =>
-                        const SizedBox(width: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    itemCount: _categories.length,
+                    separatorBuilder: (context, index) => const SizedBox(width: 8),
                     itemBuilder: (context, index) {
-                      return _buildPeriodChip(context, _periods[index]);
+                      return _buildCategoryChip(context, _categories[index]);
                     },
                   ),
                 ),
-              ],
-            ),
-          ),
 
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Row(
-              children: [
-                _buildSortButton(context, '최신순'),
-                const SizedBox(width: 10),
-                _buildSortButton(context, '인기순'),
-                const Spacer(),
-                // 주제 개수는 StreamBuilder 안에서 표시
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 10),
-
-          // Firebase 실시간 데이터 구독
-          Expanded(
-            child: StreamBuilder<List<String>>(
-              stream: _blockService.getBlockedUsersStream(),
-              builder: (context, blockedUsersSnapshot) {
-                return StreamBuilder<QuerySnapshot>(
-                  stream: _getTopicsQuery().snapshots(),
-                  builder: (context, snapshot) {
-                    // 로딩 중
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-
-                    // 에러 처리
-                    if (snapshot.hasError) {
-                      final error = snapshot.error.toString();
-                      final isIndexError =
-                          error.contains('index') ||
-                          error.contains('failed-precondition');
-
-                      return Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24.0),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(
-                                Icons.error_outline,
-                                size: 48,
-                                color: Colors.red,
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                isIndexError
-                                    ? 'Firestore 인덱스가 필요합니다'
-                                    : '오류가 발생했습니다',
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              if (isIndexError) ...[
-                                const Text(
-                                  '에러 메시지에 포함된 링크를 클릭하여\n인덱스를 생성해주세요.',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(fontSize: 14),
-                                ),
-                                const SizedBox(height: 16),
-                                ElevatedButton(
-                                  onPressed: () {
-                                    // 카테고리를 전체로 변경하여 인덱스 없이도 작동하도록
-                                    setState(() {
-                                      _selectedCategory = '전체';
-                                    });
-                                  },
-                                  child: const Text('전체 카테고리로 변경'),
-                                ),
-                              ] else ...[
-                                Text(
-                                  error,
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
+                // 조회기간 선택 바
+                Container(
+                  height: 50,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Row(
+                    children: [
+                      const Text(
+                        '조회기간: ',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                      ),
+                      Expanded(
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: _periods.length,
+                          separatorBuilder: (context, index) =>
+                              const SizedBox(width: 8),
+                          itemBuilder: (context, index) {
+                            return _buildPeriodChip(context, _periods[index]);
+                          },
                         ),
-                      );
-                    }
+                      ),
+                    ],
+                  ),
+                ),
 
-                    // 클라이언트 측에서 필터링 및 정렬 처리
-                    final allDocs = _filterAndSortDocuments(
-                      snapshot.data!.docs,
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Row(
+                    children: [
+                      _buildSortButton(context, '최신순'),
+                      const SizedBox(width: 10),
+                      _buildSortButton(context, '인기순'),
+                      const Spacer(),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 10),
+              ],
+            ),
+          ),
+
+          // Firebase 실시간 데이터 구독 (Sliver 위젯으로 변환)
+          StreamBuilder<List<String>>(
+            stream: _blockService.getBlockedUsersStream(),
+            builder: (context, blockedUsersSnapshot) {
+              return StreamBuilder<QuerySnapshot>(
+                stream: _getTopicsStream(),
+                builder: (context, snapshot) {
+                  // 로딩 중
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: const Center(child: CircularProgressIndicator()),
                     );
-                    // 신고된 주제 필터링
-                    final reportedFilteredDocs = allDocs
-                        .where((doc) => !_reportedTopics.contains(doc.id))
-                        .toList();
-                    // 차단한 사용자의 주제 필터링
-                    final blockedUserIds = blockedUsersSnapshot.data ?? [];
-                    final docs = reportedFilteredDocs.where((doc) {
-                      final data = doc.data() as Map<String, dynamic>?;
-                      final authorId = data?['authorId'] as String?;
-                      return authorId != null &&
-                          !blockedUserIds.contains(authorId);
-                    }).toList();
-                    final topicCount = docs.length;
+                  }
 
-                    // 필터링 후 데이터 없음
-                    if (topicCount == 0) {
-                      return Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24.0),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.inbox_outlined,
-                                size: 64,
-                                color: Colors.grey[400],
+                  // 에러 처리
+                  if (snapshot.hasError) {
+                    final error = snapshot.error.toString();
+                    final isIndexError =
+                        error.contains('index') ||
+                        error.contains('failed-precondition');
+
+                    return SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: Padding(
+                        padding: const EdgeInsets.all(24.0),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(
+                              Icons.error_outline,
+                              size: 48,
+                              color: Colors.red,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              isIndexError
+                                  ? 'Firestore 인덱스가 필요합니다'
+                                  : '오류가 발생했습니다',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            if (isIndexError) ...[
+                              const Text(
+                                '에러 메시지에 포함된 링크를 클릭하여\n인덱스를 생성해주세요.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(fontSize: 14),
                               ),
                               const SizedBox(height: 16),
+                              ElevatedButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _selectedCategory = '전체';
+                                  });
+                                },
+                                child: const Text('전체 카테고리로 변경'),
+                              ),
+                            ] else ...[
                               Text(
-                                _selectedCategory == '전체'
-                                    ? '아직 주제가 없습니다'
-                                    : '$_selectedCategory 카테고리에 주제가 없습니다',
-                                style: TextStyle(
-                                  color: Colors.grey[600],
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
+                                error,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
                                 ),
                               ),
-                              const SizedBox(height: 8),
-                              Text(
-                                '새로운 주제를 만들어보세요!',
-                                style: TextStyle(
-                                  color: Colors.grey[500],
-                                  fontSize: 14,
-                                ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+
+                  // 클라이언트 측에서 필터링 및 정렬 처리
+                  final allDocs = _filterAndSortDocuments(
+                    snapshot.data!.docs,
+                  );
+                  // 신고된 주제 필터링
+                  final reportedFilteredDocs = allDocs
+                      .where((doc) => !_reportedTopics.contains(doc.id))
+                      .toList();
+                  // 차단한 사용자의 주제 필터링
+                  final blockedUserIds = blockedUsersSnapshot.data ?? [];
+                  final docs = reportedFilteredDocs.where((doc) {
+                    final data = doc.data() as Map<String, dynamic>?;
+                    final authorId = data?['authorId'] as String?;
+                    return authorId != null &&
+                        !blockedUserIds.contains(authorId);
+                  }).toList();
+                  final topicCount = docs.length;
+
+                  // 필터링 후 데이터 없음
+                  if (topicCount == 0) {
+                    final isDark = Theme.of(context).brightness == Brightness.dark;
+                    return SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: Padding(
+                        padding: const EdgeInsets.all(24.0),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.inbox_outlined,
+                              size: 64,
+                              color: const Color(0xFFFF512F).withOpacity(0.6),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _selectedCategory == '전체'
+                                  ? '아직 주제가 없습니다'
+                                  : '$_selectedCategory 카테고리에 주제가 없습니다',
+                              style: TextStyle(
+                                color: isDark ? Colors.grey[300] : Colors.grey[700],
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
                               ),
-                              const SizedBox(height: 24),
-                              ElevatedButton.icon(
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '새로운 주제를 만들어보세요!',
+                              style: TextStyle(
+                                color: isDark ? Colors.grey[400] : Colors.grey[600],
+                                fontSize: 14,
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            Container(
+                              decoration: BoxDecoration(
+                                color: isDark ? const Color(0xFF2D2D3A) : Colors.white,
+                                borderRadius: BorderRadius.circular(30),
+                                border: Border.all(
+                                  color: const Color(0xFFFF512F),
+                                  width: 1.5,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: const Color(0xFFFF512F).withOpacity(0.3),
+                                    blurRadius: 8,
+                                    spreadRadius: 0,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: ElevatedButton.icon(
                                 onPressed: () {
                                   Navigator.push(
                                     context,
@@ -404,123 +515,141 @@ class _FeedScreenState extends State<FeedScreen> {
                                     ),
                                   );
                                 },
-                                icon: const Icon(Icons.add_circle_outline),
-                                label: const Text('주제 만들기'),
+                                icon: const Icon(
+                                  Icons.add_circle_outline,
+                                  color: Color(0xFFFF512F),
+                                ),
+                                label: const Text(
+                                  '주제 만들기',
+                                  style: TextStyle(
+                                    color: Color(0xFFFF512F),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFFE91E63),
-                                  foregroundColor: Colors.white,
+                                  backgroundColor: Colors.transparent,
+                                  foregroundColor: const Color(0xFFFF512F),
+                                  elevation: 0,
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 24,
                                     vertical: 12,
                                   ),
                                 ),
                               ),
-                            ],
-                          ),
-                        ),
-                      );
-                    }
-
-                    return Column(
-                      children: [
-                        // 주제 개수 표시
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                          child: Align(
-                            alignment: Alignment.centerRight,
-                            child: Text(
-                              '총 $topicCount개의 주제',
-                              style: TextStyle(
-                                color: Colors.grey[600],
-                                fontSize: 12,
-                              ),
                             ),
-                          ),
+                          ],
                         ),
-                        const SizedBox(height: 8),
-                        // 주제 리스트
-                        Expanded(
-                          child: ListView.separated(
-                            key: const PageStorageKey<String>(
-                              'feed_scroll_position',
-                            ), // 스크롤 위치 유지
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            itemCount: docs.length,
-                            separatorBuilder: (context, index) =>
-                                const SizedBox(height: 20),
-                            itemBuilder: (context, index) {
-                              final doc = docs[index];
-                              final data = doc.data() as Map<String, dynamic>;
-
-                              return StreamBuilder<QuerySnapshot>(
-                                stream: _db
-                                    .collection('topics')
-                                    .doc(doc.id)
-                                    .collection('comments')
-                                    .snapshots(),
-                                builder: (context, commentsSnapshot) {
-                                  String hotComment = '가장 먼저 댓글을 달아보세요 !';
-
-                                  if (commentsSnapshot.hasData &&
-                                      commentsSnapshot.data!.docs.isNotEmpty) {
-                                    // 공감이 가장 많은 댓글 찾기
-                                    QueryDocumentSnapshot? bestComment;
-                                    int maxLikes = -1;
-
-                                    for (var commentDoc
-                                        in commentsSnapshot.data!.docs) {
-                                      final commentData =
-                                          commentDoc.data()
-                                              as Map<String, dynamic>;
-                                      final likes =
-                                          commentData['likes'] as int? ?? 0;
-
-                                      if (likes > maxLikes) {
-                                        maxLikes = likes;
-                                        bestComment = commentDoc;
-                                      }
-                                    }
-
-                                    if (bestComment != null && maxLikes > 0) {
-                                      final bestData =
-                                          bestComment.data()
-                                              as Map<String, dynamic>;
-                                      hotComment =
-                                          bestData['content'] as String? ??
-                                          '가장 먼저 댓글을 달아보세요 !';
-                                    }
-                                  }
-
-                                  return ArenaCard(
-                                    topicId: doc.id, // 문서 ID 전달
-                                    category: data['category'] ?? '기타',
-                                    title: data['title'] ?? '제목 없음',
-                                    initialVoteCounts: List<int>.from(
-                                      data['voteCounts'] ?? [],
-                                    ),
-                                    options: List<String>.from(
-                                      data['options'] ?? [],
-                                    ),
-                                    hotComment: hotComment,
-                                    onReport: () => _reportTopic(doc.id),
-                                  );
-                                },
-                              );
-                            },
-                          ),
-                        ),
-                      ],
+                      ),
                     );
-                  },
-                );
-              },
-            ),
+                  }
+
+                  // 데이터 목록 (SliverList 사용)
+                  return SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        // 주제 개수 표시 (첫 번째 아이템 위에)
+                        if (index == 0) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16.0,
+                                  vertical: 8.0,
+                                ),
+                                child: Text(
+                                  '총 $topicCount개의 주제',
+                                  style: TextStyle(
+                                    color: Colors.grey[600],
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16.0,
+                                ),
+                                child: _buildTopicItem(docs[index]),
+                              ),
+                            ],
+                          );
+                        }
+
+                        // 일반 아이템
+                        return Container(
+                          margin: EdgeInsets.only(
+                            left: 16.0,
+                            right: 16.0,
+                            top: 10.0,
+                            bottom: index == docs.length - 1 ? 100.0 : 10.0,
+                          ),
+                          child: _buildTopicItem(docs[index]),
+                        );
+                      },
+                      childCount: docs.length,
+                    ),
+                  );
+                },
+              );
+            },
           ),
         ],
       ),
+    ),
+    );
+  }
+
+  // 주제 아이템 빌더 (ArenaCard + StreamBuilder)
+  Widget _buildTopicItem(QueryDocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: _db
+          .collection('topics')
+          .doc(doc.id)
+          .collection('comments')
+          .snapshots(),
+      builder: (context, commentsSnapshot) {
+        String hotComment = '가장 먼저 댓글을 달아보세요 !';
+
+        if (commentsSnapshot.hasData &&
+            commentsSnapshot.data!.docs.isNotEmpty) {
+          // 공감이 가장 많은 댓글 찾기
+          QueryDocumentSnapshot? bestComment;
+          int maxLikes = -1;
+
+          for (var commentDoc in commentsSnapshot.data!.docs) {
+            final commentData =
+                commentDoc.data() as Map<String, dynamic>;
+            final likes = commentData['likes'] as int? ?? 0;
+
+            if (likes > maxLikes) {
+              maxLikes = likes;
+              bestComment = commentDoc;
+            }
+          }
+
+          if (bestComment != null && maxLikes > 0) {
+            final bestData = bestComment.data() as Map<String, dynamic>;
+            hotComment = bestData['content'] as String? ??
+                '가장 먼저 댓글을 달아보세요 !';
+          }
+        }
+
+        return ArenaCard(
+          topicId: doc.id,
+          category: data['category'] ?? '기타',
+          title: data['title'] ?? '제목 없음',
+          initialVoteCounts: List<int>.from(
+            data['voteCounts'] ?? [],
+          ),
+          options: List<String>.from(
+            data['options'] ?? [],
+          ),
+          hotComment: hotComment,
+          onReport: () => _reportTopic(doc.id),
+        );
+      },
     );
   }
 
@@ -528,27 +657,39 @@ class _FeedScreenState extends State<FeedScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isSelected = _selectedCategory == label;
 
-    return FilterChip(
-      label: Text(label),
-      selected: isSelected,
-      onSelected: (bool value) {
+    return GestureDetector(
+      onTap: () {
         setState(() {
           _selectedCategory = label;
         });
       },
-      backgroundColor: isDark ? const Color(0xFF2D2D3A) : Colors.grey[200],
-      selectedColor: const Color(0xFFE91E63),
-      labelStyle: TextStyle(
-        color: isSelected
-            ? Colors.white
-            : (isDark ? Colors.grey : Colors.black87),
-        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeInOut,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? const Color(0xFFFF512F).withOpacity(0.1)
+              : (isDark ? Colors.transparent : Colors.white),
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(
+            color: isSelected
+                ? const Color(0xFFFF512F)
+                : (isDark ? Colors.grey[700]! : Colors.grey[300]!),
+            width: isSelected ? 1.5 : 1,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected
+                ? const Color(0xFFFF512F)
+                : (isDark ? Colors.grey[400] : Colors.grey[700]),
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            fontSize: 14,
+          ),
+        ),
       ),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-        side: BorderSide.none,
-      ),
-      showCheckmark: false,
     );
   }
 
@@ -566,7 +707,7 @@ class _FeedScreenState extends State<FeedScreen> {
         label,
         style: TextStyle(
           color: isActive
-              ? const Color(0xFFE91E63)
+              ? const Color(0xFFFF512F)
               : (isDark ? Colors.grey : Colors.black54),
           fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
         ),
@@ -651,22 +792,30 @@ class _FeedScreenState extends State<FeedScreen> {
           });
         }
       },
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeInOut,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
           color: isSelected
-              ? const Color(0xFFE91E63)
-              : (isDark ? const Color(0xFF2D2D3A) : Colors.grey[200]),
-          borderRadius: BorderRadius.circular(16),
+              ? const Color(0xFFFF512F).withOpacity(0.1)
+              : (isDark ? Colors.transparent : Colors.white),
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(
+            color: isSelected
+                ? const Color(0xFFFF512F)
+                : (isDark ? Colors.grey[700]! : Colors.grey[300]!),
+            width: isSelected ? 1.5 : 1,
+          ),
         ),
         child: Text(
           label,
           style: TextStyle(
             color: isSelected
-                ? Colors.white
-                : (isDark ? Colors.grey : Colors.black87),
-            fontSize: 12,
+                ? const Color(0xFFFF512F)
+                : (isDark ? Colors.grey[400] : Colors.grey[700]),
             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            fontSize: 12,
           ),
         ),
       ),
@@ -899,6 +1048,38 @@ class _ArenaCardState extends State<ArenaCard> {
     Colors.purpleAccent,
   ];
 
+  // 카테고리별 그라데이션 매핑 (프리미엄 뱃지 스타일)
+  List<Color> _getCategoryGradient(String category) {
+    final gradientMap = <String, List<Color>>{
+      '음식': [const Color(0xFFFF6B6B), const Color(0xFFFF8E53)], // Red-Orange
+      '게임': [const Color(0xFF6B8DD6), const Color(0xFF8E37D7)], // Blue-Purple
+      '연애': [const Color(0xFFFF6B9D), const Color(0xFFC44569)], // Pink-Red
+      '스포츠': [const Color(0xFF4ECDC4), const Color(0xFF44A08D)], // Cyan-Green
+      '유머': [const Color(0xFFFFD93D), const Color(0xFFFF6B6B)], // Yellow-Red
+      '정치': [const Color(0xFF4A90E2), const Color(0xFF357ABD)], // Blue
+      '직장인': [const Color(0xFF667EEA), const Color(0xFF764BA2)], // Indigo-Purple
+      '패션': [const Color(0xFFF093FB), const Color(0xFFF5576C)], // Pink-Red
+      '기타': [const Color(0xFF6B8DD6), const Color(0xFF8E37D7)], // Default Blue-Purple
+    };
+    return gradientMap[category] ?? [const Color(0xFF6B8DD6), const Color(0xFF8E37D7)];
+  }
+
+  // 카테고리별 글로우 색상
+  Color _getCategoryGlowColor(String category) {
+    final glowMap = <String, Color>{
+      '음식': Colors.orangeAccent,
+      '게임': Colors.purpleAccent,
+      '연애': Colors.pinkAccent,
+      '스포츠': Colors.greenAccent,
+      '유머': Colors.amberAccent,
+      '정치': Colors.blueAccent,
+      '직장인': Colors.indigoAccent,
+      '패션': Colors.pinkAccent,
+      '기타': Colors.blueAccent,
+    };
+    return glowMap[category] ?? Colors.blueAccent;
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -932,61 +1113,93 @@ class _ArenaCardState extends State<ArenaCard> {
 
         final bool hasVoted = currentSelectedIndex != null;
 
-        return Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF2D2D3A) : Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: isDark
-                ? []
-                : [
-                    BoxShadow(
-                      color: Colors.grey.withOpacity(0.15),
-                      blurRadius: 15,
-                      offset: const Offset(0, 5),
+        return InkWell(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => VoteScreen(topicId: widget.topicId),
+              ),
+            );
+          },
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            padding: const EdgeInsets.all(20.0),
+            decoration: BoxDecoration(
+              gradient: isDark
+                  ? null
+                  : LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Colors.white,
+                        const Color(0xFFF5F7FA),
+                      ],
                     ),
-                  ],
-          ),
-          child: Column(
+              color: isDark ? const Color(0xFF2D2D3A) : null,
+              borderRadius: BorderRadius.circular(20.0),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 15,
+                  offset: const Offset(0, 8),
+                  spreadRadius: 0,
+                ),
+              ],
+            ),
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
+                  // Premium Badge-style Category Chip with Gradient
                   Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
+                      horizontal: 12,
+                      vertical: 6,
                     ),
                     decoration: BoxDecoration(
-                      color: isDark ? Colors.white10 : Colors.grey[100],
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: isDark ? Colors.white12 : Colors.grey[300]!,
-                      ),
+                      gradient: isDark
+                          ? null
+                          : LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: _getCategoryGradient(widget.category),
+                            ),
+                      color: isDark ? Colors.white10 : null,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: isDark
+                          ? []
+                          : [
+                              BoxShadow(
+                                color: _getCategoryGlowColor(widget.category)
+                                    .withOpacity(0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 3),
+                                spreadRadius: 0,
+                              ),
+                            ],
                     ),
                     child: Text(
                       widget.category,
                       style: TextStyle(
-                        fontWeight: FontWeight.bold,
+                        fontWeight: FontWeight.w600,
                         fontSize: 12,
-                        color: isDark ? Colors.white : Colors.black87,
+                        color: isDark ? Colors.white70 : Colors.white,
+                        letterSpacing: 0.5,
                       ),
                     ),
                   ),
                   const Spacer(),
-                  Icon(Icons.people_outline, size: 16, color: Colors.grey[500]),
-                  const SizedBox(width: 4),
-                  Text(
-                    '$totalVotes명',
-                    style: TextStyle(color: Colors.grey[500], fontSize: 13),
-                  ),
-                  if (widget.onReport != null) ...[
-                    const SizedBox(width: 8),
+                  if (widget.onReport != null)
                     PopupMenuButton<String>(
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.more_vert,
                         size: 18,
-                        color: Colors.grey,
+                        color: isDark ? Colors.grey[500] : Colors.grey[600],
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
                       onSelected: (value) {
                         if (value == 'report') {
@@ -994,36 +1207,39 @@ class _ArenaCardState extends State<ArenaCard> {
                         }
                       },
                       itemBuilder: (context) => [
-                        const PopupMenuItem(
+                        PopupMenuItem(
                           value: 'report',
                           child: Row(
                             children: [
                               Icon(
                                 Icons.flag_outlined,
-                                size: 20,
-                                color: Colors.red,
+                                size: 18,
+                                color: Colors.red[400],
                               ),
-                              SizedBox(width: 8),
-                              Text('이 주제 신고하기'),
+                              const SizedBox(width: 10),
+                              const Text(
+                                '이 주제 신고하기',
+                                style: TextStyle(fontSize: 14),
+                              ),
                             ],
                           ),
                         ),
                       ],
                     ),
-                  ],
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               Text(
                 widget.title,
                 style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  height: 1.3,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  height: 1.4,
                   color: isDark ? Colors.white : Colors.black87,
+                  letterSpacing: -0.3,
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 24),
               Column(
                 children: List.generate(widget.options.length, (index) {
                   final isSelected = currentSelectedIndex == index;
@@ -1031,17 +1247,17 @@ class _ArenaCardState extends State<ArenaCard> {
                   final percentValue = _getPercentValue(index, totalVotes);
 
                   return Padding(
-                    padding: const EdgeInsets.only(bottom: 8.0),
+                    padding: const EdgeInsets.only(bottom: 10.0),
                     child: GestureDetector(
                       onTap: () => _castVote(index),
                       child: Stack(
                         children: [
                           Container(
-                            height: 50,
+                            height: 56,
                             width: double.infinity,
                             decoration: BoxDecoration(
                               color: isDark ? Colors.black26 : Colors.grey[100],
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(14),
                               border: Border.all(
                                 color: isSelected
                                     ? color
@@ -1050,7 +1266,7 @@ class _ArenaCardState extends State<ArenaCard> {
                                           : (isDark
                                                 ? Colors.white24
                                                 : Colors.grey[300]!)),
-                                width: isSelected ? 2 : 1,
+                                width: isSelected ? 2.5 : 1,
                               ),
                             ),
                           ),
@@ -1058,18 +1274,18 @@ class _ArenaCardState extends State<ArenaCard> {
                             LayoutBuilder(
                               builder: (context, constraints) {
                                 return Container(
-                                  height: 50,
+                                  height: 56,
                                   width: constraints.maxWidth * percentValue,
                                   decoration: BoxDecoration(
-                                    color: color.withOpacity(0.25),
-                                    borderRadius: BorderRadius.circular(12),
+                                    color: color.withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(14),
                                   ),
                                 );
                               },
                             ),
                           Container(
-                            height: 50,
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            height: 56,
+                            padding: const EdgeInsets.symmetric(horizontal: 18),
                             alignment: Alignment.centerLeft,
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1079,16 +1295,17 @@ class _ArenaCardState extends State<ArenaCard> {
                                     widget.options[index],
                                     style: TextStyle(
                                       fontWeight: isSelected
-                                          ? FontWeight.bold
-                                          : FontWeight.normal,
+                                          ? FontWeight.w600
+                                          : FontWeight.w500,
                                       fontSize: 15,
                                       color: isSelected
                                           ? color
                                           : (isDark
                                                 ? Colors.white70
-                                                : Colors.black87),
+                                                : Colors.grey[700]),
+                                      height: 1.3,
                                     ),
-                                    maxLines: 1,
+                                    maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
@@ -1122,70 +1339,95 @@ class _ArenaCardState extends State<ArenaCard> {
                   );
                 }),
               ),
-              const SizedBox(height: 16),
-              GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => VoteScreen(
-                        topicId: widget.topicId,
-                        highlightComment: widget.hotComment,
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: isDark ? Colors.black26 : Colors.grey[50],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    const Text(
+                      '🔥 베댓: ',
+                      style: TextStyle(
+                        color: Colors.orange,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
                       ),
                     ),
-                  );
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: isDark ? Colors.black26 : Colors.grey[50],
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    children: [
-                      const Text(
-                        '🔥 베댓: ',
+                    Expanded(
+                      child: Text(
+                        widget.hotComment,
                         style: TextStyle(
-                          color: Colors.orange,
-                          fontWeight: FontWeight.bold,
+                          color: isDark ? Colors.white70 : Colors.grey[700],
+                          fontSize: 13,
+                          height: 1.4,
                         ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      Expanded(
-                        child: Text(
-                          widget.hotComment,
-                          style: TextStyle(
-                            color: isDark ? Colors.white70 : Colors.black87,
-                            fontSize: 13,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.people_outline,
+                        size: 14,
+                        color: isDark ? Colors.grey[500] : Colors.grey[600],
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        '$totalVotes명 참여',
+                        style: TextStyle(
+                          color: isDark ? Colors.grey[500] : Colors.grey[600],
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                     ],
                   ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: TextButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) =>
-                            VoteScreen(topicId: widget.topicId),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.comment_outlined, size: 18),
-                  label: const Text('토론장 입장해서 댓글 보기'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: Colors.grey[500],
+                  TextButton(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              VoteScreen(topicId: widget.topicId),
+                        ),
+                      );
+                    },
+                    style: TextButton.styleFrom(
+                      foregroundColor: isDark ? Colors.grey[400] : Colors.grey[600],
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '댓글 보기',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Icon(Icons.arrow_forward_ios, size: 12),
+                      ],
+                    ),
                   ),
-                ),
+                ],
               ),
             ],
+          ),
           ),
         );
       },

@@ -1,6 +1,10 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:io' show Platform;
+import '../utils/notification_state.dart';
 
 // 백그라운드 메시지 핸들러 (top-level 함수여야 함)
 @pragma('vm:entry-point')
@@ -21,11 +25,22 @@ class FCMService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
   String? _fcmToken;
+  
+  // 로컬 알림 플러그인 인스턴스
+  final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
+  
+  // 알림 채널 ID (Android용)
+  static const String _notificationChannelId = 'key_war_notifications';
+  static const String _notificationChannelName = 'Key War 알림';
+  static const String _notificationChannelDescription = '투표 및 댓글 알림을 받습니다.';
 
   // FCM 초기화
   Future<void> initialize() async {
     try {
       print('🔔 FCM 초기화 시작...');
+      
+      // 로컬 알림 초기화
+      await _initializeLocalNotifications();
       
       // 알림 권한 요청 (iOS)
       NotificationSettings settings = await _messaging.requestPermission(
@@ -68,13 +83,22 @@ class FCMService {
 
     // 포그라운드 메시지 핸들러
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      print('포그라운드 메시지 수신: ${message.messageId}');
+      print('📨 포그라운드 메시지 수신: ${message.messageId}');
       print('제목: ${message.notification?.title}');
       print('내용: ${message.notification?.body}');
       print('데이터: ${message.data}');
       
-      // 여기서 로컬 알림을 표시할 수 있습니다
-      // flutter_local_notifications 패키지를 사용하면 됩니다
+      // 알림 데이터에서 voteId 추출 (topicId 또는 voteId 필드 확인)
+      final voteId = message.data['voteId'] ?? message.data['topicId'];
+      
+      // 현재 보고 있는 투표방인지 확인
+      if (NotificationState.isViewingVote(voteId)) {
+        print('⏭️ 현재 보고 있는 방이라 알림 생략: voteId=$voteId');
+        return;
+      }
+      
+      // 다른 방의 알림이면 로컬 알림 표시
+      _showLocalNotification(message);
     });
 
     // 백그라운드 메시지 핸들러 등록
@@ -134,6 +158,105 @@ class FCMService {
       });
     } catch (e) {
       print('알림 저장 에러: $e');
+    }
+  }
+
+  // 로컬 알림 초기화
+  Future<void> _initializeLocalNotifications() async {
+    // Android 초기화 설정
+    const AndroidInitializationSettings androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    
+    // iOS 초기화 설정
+    const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
+    
+    // 초기화 설정
+    const InitializationSettings initSettings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
+    
+    // 초기화
+    await _localNotifications.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) {
+        print('로컬 알림 클릭: ${response.payload}');
+        // 알림 클릭 시 처리 로직은 필요에 따라 추가
+      },
+    );
+    
+    // Android 알림 채널 생성 (Android 8.0 이상)
+    if (!kIsWeb && Platform.isAndroid) {
+      const AndroidNotificationChannel channel = AndroidNotificationChannel(
+        _notificationChannelId,
+        _notificationChannelName,
+        description: _notificationChannelDescription,
+        importance: Importance.max, // 최대 중요도로 설정하여 헤드업 알림 표시
+        playSound: true,
+        enableVibration: true,
+        showBadge: true,
+      );
+      
+      await _localNotifications
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(channel);
+      
+      print('✅ Android 알림 채널 생성 완료: $_notificationChannelId');
+    }
+  }
+
+  // 로컬 알림 표시
+  Future<void> _showLocalNotification(RemoteMessage message) async {
+    try {
+      final title = message.notification?.title ?? 'Key War';
+      final body = message.notification?.body ?? '';
+      final data = message.data;
+      
+      // 알림 ID 생성 (중복 방지)
+      final notificationId = message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch;
+      
+      // Android 알림 상세 설정
+      const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+        _notificationChannelId,
+        _notificationChannelName,
+        channelDescription: _notificationChannelDescription,
+        importance: Importance.max, // 헤드업 알림 표시
+        priority: Priority.high,
+        showWhen: true,
+        enableVibration: true,
+        playSound: true,
+      );
+      
+      // iOS 알림 상세 설정
+      const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+      
+      // 플랫폼별 알림 상세 설정
+      const NotificationDetails notificationDetails = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+      
+      // 알림 표시
+      await _localNotifications.show(
+        notificationId,
+        title,
+        body,
+        notificationDetails,
+        payload: data.toString(), // 알림 클릭 시 전달할 데이터
+      );
+      
+      print('✅ 로컬 알림 표시 완료: title=$title, body=$body');
+    } catch (e) {
+      print('❌ 로컬 알림 표시 에러: $e');
     }
   }
 }
