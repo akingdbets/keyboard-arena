@@ -246,7 +246,7 @@ class _NotificationSettingScreenState extends State<NotificationSettingScreen> {
             title: const Text('회원 탈퇴', style: TextStyle(color: Colors.red)),
             subtitle: const Text('모든 활동 내역이 삭제되며 복구할 수 없습니다.', style: TextStyle(fontSize: 12, color: Colors.red)),
             onTap: () async {
-              // 경고 팝업
+              // 1. 재확인 다이얼로그
               final confirmed = await showDialog<bool>(
                 context: context,
                 builder: (context) => AlertDialog(
@@ -271,12 +271,11 @@ class _NotificationSettingScreenState extends State<NotificationSettingScreen> {
               if (confirmed != true) return;
 
               try {
-                // 회원 탈퇴 실행 (AuthService의 deleteAccount 메서드 사용)
+                // 2. 회원 탈퇴 실행
                 await AuthService().deleteAccount();
 
-                // 성공 시 로그인 화면으로 이동
+                // 3. 성공 시 즉시 로그인 화면으로 이동
                 if (mounted) {
-                  // 모든 화면을 닫고 루트로 이동 (app.dart의 StreamBuilder가 LoginScreen을 보여줌)
                   Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
                     MaterialPageRoute(builder: (context) => const LoginScreen()),
                     (route) => false,
@@ -287,23 +286,34 @@ class _NotificationSettingScreenState extends State<NotificationSettingScreen> {
                   );
                 }
               } on FirebaseAuthException catch (e) {
-                // FirebaseAuthException 처리 (특히 requires-recent-login 케이스)
+                // requires-recent-login 에러 처리
                 print('❌ 회원 탈퇴 에러 (FirebaseAuthException): ${e.code} - ${e.message}');
+                
                 if (mounted) {
-                  String errorMessage;
                   if (e.code == 'requires-recent-login') {
-                    errorMessage = '안전을 위해 다시 로그인 후 탈퇴해주세요';
+                    // 재인증 필요: 로그아웃 후 로그인 화면으로 이동
+                    await AuthService().signOut();
+                    
+                    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+                      MaterialPageRoute(builder: (context) => const LoginScreen()),
+                      (route) => false,
+                    );
+                    
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('보안을 위해 다시 로그인이 필요합니다.'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
                   } else {
-                    errorMessage = e.message ?? '회원 탈퇴 중 오류가 발생했습니다.';
+                    // 그 외 FirebaseAuthException
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(e.message ?? '회원 탈퇴 중 오류가 발생했습니다.'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
                   }
-                  
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(errorMessage),
-                      backgroundColor: Colors.red,
-                      duration: const Duration(seconds: 5),
-                    ),
-                  );
                 }
               } catch (e) {
                 // 일반 Exception 처리
@@ -313,7 +323,6 @@ class _NotificationSettingScreenState extends State<NotificationSettingScreen> {
                     SnackBar(
                       content: Text(e.toString().replaceFirst('Exception: ', '')),
                       backgroundColor: Colors.red,
-                      duration: const Duration(seconds: 5),
                     ),
                   );
                 }

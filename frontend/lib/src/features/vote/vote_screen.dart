@@ -8,6 +8,7 @@ import '../report/report_service.dart';
 import '../report/report_dialog.dart';
 import '../block/block_service.dart';
 import '../../utils/notification_state.dart';
+import '../../utils/profanity_filter.dart';
 
 // 원댓글이 삭제되었을 때 발생하는 예외
 class ParentCommentDeletedException implements Exception {
@@ -564,6 +565,14 @@ class _VoteScreenState extends State<VoteScreen>
   // [기능 2] 댓글 쓰기 (로그인 유저 정보 연동)
   Future<void> _addComment() async {
     if (_commentController.text.isEmpty) return;
+
+    // 욕설 필터링 검사
+    if (ProfanityFilter.hasProfanity(_commentController.text)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('비속어가 포함되어 있습니다.')),
+      );
+      return;
+    }
 
     // 1. 현재 로그인한 사용자 정보 가져오기
     final user = FirebaseAuth.instance.currentUser;
@@ -1238,6 +1247,7 @@ class _VoteScreenState extends State<VoteScreen>
         targetId: commentId,
         targetType: 'comment',
         reason: reason,
+        topicId: widget.topicId, // 댓글 신고 시 topicId 전달
       );
 
       if (mounted) {
@@ -1370,6 +1380,43 @@ class _VoteScreenState extends State<VoteScreen>
                               ),
                               const SizedBox(height: 16),
                               const Text('주제를 찾을 수 없습니다'),
+                              const SizedBox(height: 16),
+                              ElevatedButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text('돌아가기'),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+
+                      // 삭제된 주제 확인
+                      final topicData = snapshot.data!.data() as Map<String, dynamic>?;
+                      final status = topicData?['status'] as String?;
+                      if (status == 'deleted') {
+                        // 삭제된 주제인 경우 화면 닫기 또는 메시지 표시
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) {
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('삭제된 게시물입니다'),
+                                duration: Duration(seconds: 2),
+                              ),
+                            );
+                          }
+                        });
+                        return Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(
+                                Icons.delete_outline,
+                                size: 48,
+                                color: Colors.grey,
+                              ),
+                              const SizedBox(height: 16),
+                              const Text('삭제된 게시물입니다'),
                               const SizedBox(height: 16),
                               ElevatedButton(
                                 onPressed: () => Navigator.pop(context),
@@ -1577,12 +1624,19 @@ class _VoteScreenState extends State<VoteScreen>
                                 (doc) => !_reportedComments.contains(doc.id),
                               )
                               .toList();
-                          // 차단한 사용자의 댓글 필터링
+                          // 차단한 사용자의 댓글 필터링 및 상태 필터링 (banned만 숨김, review는 표시)
                           final filteredDocs = reportedFilteredDocs.where((
                             doc,
                           ) {
                             final data = doc.data() as Map<String, dynamic>;
                             final authorId = data['uid'] as String?;
+                            final status = data['status'] as String?;
+                            
+                            // banned 상태만 숨김 (review, active는 표시)
+                            if (status == 'banned') {
+                              return false;
+                            }
+                            
                             return authorId != null &&
                                 !blockedUserIds.contains(authorId);
                           }).toList();

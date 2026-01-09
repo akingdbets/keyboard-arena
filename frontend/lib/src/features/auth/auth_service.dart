@@ -186,4 +186,48 @@ class AuthService {
       'isPublic': true,
     });
   }
+
+  // ★ [NEW] 유저 제재 상태 확인 및 처리
+  /// 제재된 유저인지 확인하고, 제재된 경우 강제 로그아웃 처리
+  /// 
+  /// [uid] 확인할 유저의 UID
+  /// 
+  /// 반환값: true = 정상 유저, false = 제재된 유저 (로그아웃 처리됨)
+  /// 
+  /// 제재 조건:
+  /// - isBanned == true
+  /// - warningCount >= 3
+  Future<bool> checkUserStatus(String uid) async {
+    try {
+      final userDoc = await _db.collection('users').doc(uid).get();
+      
+      if (!userDoc.exists) {
+        // 프로필이 없으면 정상 처리 (신규 유저)
+        return true;
+      }
+
+      final userData = userDoc.data();
+      if (userData == null) {
+        return true;
+      }
+
+      final isBanned = userData['isBanned'] as bool? ?? false;
+      final warningCount = userData['warningCount'] as int? ?? 0;
+
+      // 제재 조건 확인
+      if (isBanned || warningCount >= 3) {
+        // 제재된 유저: 강제 로그아웃
+        print('🚫 제재된 유저 감지: uid=$uid, isBanned=$isBanned, warningCount=$warningCount');
+        await signOut();
+        return false;
+      }
+
+      // 정상 유저
+      return true;
+    } catch (e) {
+      print('❌ 유저 상태 확인 에러: $e');
+      // 에러 발생 시 안전하게 정상 유저로 처리
+      return true;
+    }
+  }
 }

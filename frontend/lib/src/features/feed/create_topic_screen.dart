@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:crop_your_image/crop_your_image.dart';
 import 'dart:io';
 import 'dart:typed_data';
+import '../../utils/profanity_filter.dart';
 
 class CreateTopicScreen extends StatefulWidget {
   const CreateTopicScreen({super.key});
@@ -182,6 +183,24 @@ class _CreateTopicScreenState extends State<CreateTopicScreen> {
       if (controller.text.trim().isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('모든 선택지 내용을 입력해주세요.')),
+        );
+        return;
+      }
+    }
+
+    // 욕설 필터링 검사 - 제목
+    if (ProfanityFilter.hasProfanity(_titleController.text.trim())) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('제목에 비속어가 포함되어 있습니다.')),
+      );
+      return;
+    }
+
+    // 욕설 필터링 검사 - 선택지
+    for (var controller in _optionControllers) {
+      if (ProfanityFilter.hasProfanity(controller.text.trim())) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('선택지에 비속어가 포함되어 있습니다.')),
         );
         return;
       }

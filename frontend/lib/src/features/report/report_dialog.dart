@@ -25,6 +25,7 @@ class ReportDialog extends StatelessWidget {
       '상업적 광고 및 스팸',
       '음란물 및 불건전한 내용',
       '불법 정보 및 선동',
+      '불건전한 닉네임',
       '기타',
     ];
 

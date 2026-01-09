@@ -42,7 +42,8 @@ service cloud.firestore {
       allow delete: if request.auth != null && 
                      resource.data.authorId == request.auth.uid;
       
-      // 수정: 작성자만 수정 가능하지만, voteCounts와 totalVotes는 로그인 유저 누구나 수정 가능
+      // 수정: 작성자만 수정 가능하지만, voteCounts/totalVotes는 로그인 유저 누구나 수정 가능
+      // reportCount/status/isUnderReview는 신고 기능을 위해 로그인 유저 누구나 수정 가능
       allow update: if request.auth != null && (
         // 작성자가 모든 필드 수정 가능
         resource.data.authorId == request.auth.uid ||
@@ -52,6 +53,25 @@ service cloud.firestore {
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['voteCounts', 'totalVotes', 'updatedAt']) &&
           // voteCounts와 totalVotes가 실제로 변경되었는지 확인
           (request.resource.data.voteCounts is list && request.resource.data.totalVotes is int)
+        ) ||
+        // 신고 기능: reportCount, status, isUnderReview 필드만 수정 가능
+        (
+          // reportCount만 변경되는 경우
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportCount']) && 
+           request.resource.data.reportCount is int) ||
+          // reportCount와 status만 변경되는 경우
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportCount', 'status']) && 
+           request.resource.data.reportCount is int && 
+           request.resource.data.status is string) ||
+          // reportCount, status, isUnderReview가 변경되는 경우
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportCount', 'status', 'isUnderReview']) && 
+           request.resource.data.reportCount is int && 
+           request.resource.data.status is string && 
+           request.resource.data.isUnderReview is bool) ||
+          // reportCount와 isUnderReview만 변경되는 경우
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportCount', 'isUnderReview']) && 
+           request.resource.data.reportCount is int && 
+           request.resource.data.isUnderReview is bool)
         )
       );
       
@@ -64,6 +84,7 @@ service cloud.firestore {
         allow create: if request.auth != null;
         
         // 수정: 댓글 작성자만 가능하지만, likes/likedBy/replies는 로그인 유저 누구나 수정 가능 (공감 기능 때문)
+        // reportCount/status/isUnderReview는 신고 기능을 위해 로그인 유저 누구나 수정 가능
         allow update: if request.auth != null && (
           // 작성자가 모든 필드 수정 가능 (예: content, isDeleted 등)
           resource.data.uid == request.auth.uid ||
@@ -73,6 +94,25 @@ service cloud.firestore {
             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'likedBy', 'replies']) &&
             // likes는 정수이고 likedBy는 배열, replies는 배열인지 확인
             (request.resource.data.likes is int && request.resource.data.likedBy is list && request.resource.data.replies is list)
+          ) ||
+          // 신고 기능: reportCount, status, isUnderReview 필드만 수정 가능
+          (
+            // reportCount만 변경되는 경우
+            (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportCount']) && 
+             request.resource.data.reportCount is int) ||
+            // reportCount와 status만 변경되는 경우
+            (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportCount', 'status']) && 
+             request.resource.data.reportCount is int && 
+             request.resource.data.status is string) ||
+            // reportCount, status, isUnderReview가 변경되는 경우
+            (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportCount', 'status', 'isUnderReview']) && 
+             request.resource.data.reportCount is int && 
+             request.resource.data.status is string && 
+             request.resource.data.isUnderReview is bool) ||
+            // reportCount와 isUnderReview만 변경되는 경우
+            (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportCount', 'isUnderReview']) && 
+             request.resource.data.reportCount is int && 
+             request.resource.data.isUnderReview is bool)
           )
         );
         

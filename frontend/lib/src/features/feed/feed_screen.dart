@@ -9,6 +9,8 @@ import 'create_topic_screen.dart';
 import '../report/report_service.dart';
 import '../report/report_dialog.dart';
 import '../block/block_service.dart';
+import '../auth/auth_service.dart';
+import '../auth/login_screen.dart';
 
 class FeedScreen extends StatefulWidget {
   const FeedScreen({super.key});
@@ -67,6 +69,46 @@ class _FeedScreenState extends State<FeedScreen> with AutomaticKeepAliveClientMi
     // ScrollController 초기화는 initState에서만 수행
     _scrollController = ScrollController();
     _loadReportedTopics();
+    
+    // ★ [제재 체크] 화면이 빌드된 직후 유저 상태 확인
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkUserBanStatus();
+    });
+  }
+
+  // 제재된 유저 체크 및 강제 로그아웃
+  Future<void> _checkUserBanStatus() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return; // 로그인 안 되어 있으면 체크 불필요
+
+    try {
+      final authService = AuthService();
+      final isAllowed = await authService.checkUserStatus(user.uid);
+      
+      if (!isAllowed && mounted) {
+        // 제재된 유저: 강제 로그아웃 및 로그인 화면으로 이동
+        Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const LoginScreen()),
+          (route) => false, // 모든 이전 화면 제거
+        );
+        
+        // 이동 후 알림 표시 (약간의 지연 후)
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('계정이 정지되어 로그아웃되었습니다.'),
+                backgroundColor: Colors.red,
+                duration: Duration(seconds: 3),
+              ),
+            );
+          }
+        });
+      }
+    } catch (e) {
+      print('❌ 유저 제재 상태 체크 에러: $e');
+      // 에러 발생 시에도 앱은 계속 실행 (안전 처리)
+    }
   }
 
   @override
@@ -136,10 +178,17 @@ class _FeedScreenState extends State<FeedScreen> with AutomaticKeepAliveClientMi
   List<QueryDocumentSnapshot> _filterAndSortDocuments(
     List<QueryDocumentSnapshot> docs,
   ) {
+    // 0. status 필터링 (deleted, banned 제외)
+    List<QueryDocumentSnapshot> filteredDocs = docs.where((doc) {
+      final data = doc.data() as Map<String, dynamic>?;
+      final status = data?['status'] as String?;
+      // active, review는 표시, deleted, banned는 숨김
+      return status != 'deleted' && status != 'banned';
+    }).toList();
+    
     // 1. 카테고리 필터링
-    List<QueryDocumentSnapshot> filteredDocs = docs;
     if (_selectedCategory != '전체') {
-      filteredDocs = docs.where((doc) {
+      filteredDocs = filteredDocs.where((doc) {
         final data = doc.data() as Map<String, dynamic>?;
         final category = data?['category'] as String?;
         return category == _selectedCategory;
@@ -443,11 +492,18 @@ class _FeedScreenState extends State<FeedScreen> with AutomaticKeepAliveClientMi
                   final reportedFilteredDocs = allDocs
                       .where((doc) => !_reportedTopics.contains(doc.id))
                       .toList();
-                  // 차단한 사용자의 주제 필터링
+                  // 차단한 사용자의 주제 필터링 및 상태 필터링 (banned만 숨김, review는 표시)
                   final blockedUserIds = blockedUsersSnapshot.data ?? [];
                   final docs = reportedFilteredDocs.where((doc) {
                     final data = doc.data() as Map<String, dynamic>?;
                     final authorId = data?['authorId'] as String?;
+                    final status = data?['status'] as String?;
+                    
+                    // banned 상태만 숨김 (review, active는 표시)
+                    if (status == 'banned') {
+                      return false;
+                    }
+                    
                     return authorId != null &&
                         !blockedUserIds.contains(authorId);
                   }).toList();

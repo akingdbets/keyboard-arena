@@ -554,7 +554,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final docs = snapshot.data!.docs;
         print("📊 주제 목록 개수: ${docs.length}");
         
-        if (docs.isEmpty) {
+        // status가 'deleted'인 항목 필터링
+        final filteredDocs = docs.where((doc) {
+          final data = doc.data() as Map<String, dynamic>?;
+          final status = data?['status'] as String?;
+          return status != 'deleted';
+        }).toList();
+        
+        if (filteredDocs.isEmpty) {
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -570,7 +577,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         }
 
         // 클라이언트에서 정렬 (createdAt 기준)
-        final sortedDocs = List<QueryDocumentSnapshot>.from(docs);
+        final sortedDocs = List<QueryDocumentSnapshot>.from(filteredDocs);
         sortedDocs.sort((a, b) {
           final aData = a.data() as Map<String, dynamic>?;
           final bData = b.data() as Map<String, dynamic>?;
@@ -711,7 +718,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  // 주제 삭제 함수
+  // 주제 삭제 함수 (Soft Delete)
   Future<void> _deleteTopic(BuildContext context, String topicId, String title) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -735,8 +742,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (confirmed != true) return;
 
     try {
-      // 주제 문서 삭제 (서브컬렉션도 자동 삭제됨)
-      await _db.collection('topics').doc(topicId).delete();
+      // Soft Delete: 문서를 삭제하지 않고 status를 'deleted'로 변경
+      await _db.collection('topics').doc(topicId).update({
+        'status': 'deleted',
+      });
       
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

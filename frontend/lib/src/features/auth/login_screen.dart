@@ -29,8 +29,30 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
+      // ★ [제재 체크] 로그인 성공 직후 제재 상태 확인
+      final authService = AuthService();
+      final isAllowed = await authService.checkUserStatus(user.uid);
+      
+      if (!isAllowed) {
+        // 제재된 유저: 로그인 차단
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _errorMessage = '운영 정책 위반으로 계정이 정지되었습니다.';
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('운영 정책 위반으로 계정이 정지되었습니다.'),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+        return;
+      }
+
       // ★ [핵심 수정] 프로필 존재 여부 확인
-      final exists = await AuthService().hasProfile(user.uid);
+      final exists = await authService.hasProfile(user.uid);
 
       if (mounted) {
         if (exists) {

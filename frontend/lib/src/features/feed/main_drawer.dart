@@ -5,6 +5,7 @@ import '../../core/theme_controller.dart';
 import '../profile/profile_screen.dart';
 import '../profile/notification_setting_screen.dart';
 import '../../features/auth/auth_service.dart';
+import '../../utils/profanity_filter.dart';
 
 class MainDrawer extends StatefulWidget {
   const MainDrawer({super.key});
@@ -450,6 +451,14 @@ class _MainDrawerState extends State<MainDrawer> {
                         return;
                       }
 
+                      // 욕설 필터링 검사
+                      if (ProfanityFilter.hasProfanity(newNickname)) {
+                        setDialogState(() {
+                          errorMessage = '비속어가 포함되어 있습니다.';
+                        });
+                        return;
+                      }
+
                       // 현재 닉네임과 동일하면 업데이트 불필요
                       if (newNickname == currentNickname) {
                         Navigator.pop(dialogContext);
@@ -542,7 +551,10 @@ class _MainDrawerState extends State<MainDrawer> {
                           Navigator.pop(dialogContext);
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: const Text('닉네임이 변경되었습니다.'),
+                              content: const Text(
+                                '닉네임이 변경되었습니다.',
+                                style: TextStyle(color: Colors.white),
+                              ),
                               backgroundColor: isDark
                                   ? const Color(0xFF2D2D3A)
                                   : Colors.grey[800],
